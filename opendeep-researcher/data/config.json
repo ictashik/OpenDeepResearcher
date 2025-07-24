@@ -1,0 +1,6 @@
+{
+  "ollama_endpoint": "",
+  "api_key": "",
+  "screening_model": "",
+  "extraction_model": ""
+}
