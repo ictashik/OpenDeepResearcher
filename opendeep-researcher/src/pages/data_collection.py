@@ -165,7 +165,7 @@ def show(logger):
         st.markdown("**🎯 Search Execution:**")
         
         # Show tip about using multiple sources
-        st.info("💡 **Tip:** Select multiple sources including 'Google Scholar (Scholarly)' and 'DuckDuckGo Academic' to get more comprehensive results. The system will now try multiple search strategies to find more articles.")
+        st.info("💡 **Enhanced Search Strategy:** The system now prioritizes your research question for more targeted results, then uses keywords as backup. This provides more relevant articles for your systematic review.")
         
         col1, col2 = st.columns([2, 1])
         
@@ -211,12 +211,29 @@ def show(logger):
                 st.rerun()
         
         with col2:
-            st.markdown("**🔍 Search Preview:**")
-            search_query_preview = " OR ".join([f'"{kw}"' for kw in included_keywords[:3]])
-            if len(included_keywords) > 3:
-                search_query_preview += " OR ..."
+            st.markdown("**🔍 Search Strategy Preview:**")
             
-            st.code(search_query_preview, language="text")
+            # Show research question if available
+            projects_df = load_projects()
+            current_project = projects_df[projects_df['project_id'] == project_id].iloc[0]
+            research_question = current_project.get('research_question', '')
+            
+            if research_question:
+                st.markdown("**1. Research Question Search:**")
+                rq_preview = research_question[:60] + "..." if len(research_question) > 60 else research_question
+                st.code(f'"{rq_preview}"', language="text")
+                
+                st.markdown("**2. Keyword Fallback:**")
+                keyword_preview = " OR ".join([f'"{kw}"' for kw in included_keywords[:2]])
+                if len(included_keywords) > 2:
+                    keyword_preview += " OR ..."
+                st.code(keyword_preview, language="text")
+            else:
+                st.markdown("**Keyword Search:**")
+                keyword_preview = " OR ".join([f'"{kw}"' for kw in included_keywords[:3]])
+                if len(included_keywords) > 3:
+                    keyword_preview += " OR ..."
+                st.code(keyword_preview, language="text")
             
             estimated_results = len(search_sources) * max_results_override
             st.metric("Estimated Results", estimated_results)
@@ -303,6 +320,16 @@ def show(logger):
                 try:
                     live_logger.info("🚀 Starting comprehensive literature search...")
                     live_logger.info(f"📊 Searching {len(search_sources)} sources for up to {max_results_override} results each")
+                    
+                    # Get research question for enhanced search
+                    projects_df = load_projects()
+                    current_project = projects_df[projects_df['project_id'] == project_id].iloc[0]
+                    research_question = current_project.get('research_question', '')
+                    
+                    if research_question:
+                        live_logger.info(f"🎯 Using research question for targeted search: {research_question[:80]}...")
+                    else:
+                        live_logger.warning("⚠️ No research question found, using keywords only")
                     
                     # Initialize searcher with live updates
                     searcher = RobustAcademicSearcher(

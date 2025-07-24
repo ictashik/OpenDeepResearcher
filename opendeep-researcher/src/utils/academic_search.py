@@ -74,27 +74,27 @@ class RobustAcademicSearcher:
         delay = random.uniform(*self.delay_range)
         time.sleep(delay)
     
-    def search_all_sources(self, keywords: List[str], sources: List[str], logger=None) -> pd.DataFrame:
+    def search_all_sources(self, keywords: List[str], sources: List[str], logger=None, research_question: str = None) -> pd.DataFrame:
         """
         Search all sources with multiple fallback strategies.
+        Now prioritizes research question-based searches over keyword searches.
         """
         all_articles = []
         
-        if not keywords:
+        if not keywords and not research_question:
             if logger:
-                logger.error("❌ No keywords provided")
+                logger.error("❌ No keywords or research question provided")
             return pd.DataFrame(columns=['id', 'title', 'authors', 'abstract', 'source', 'url', 'year'])
         
-        # Clean and prepare keywords
-        clean_keywords = [kw.strip() for kw in keywords if kw.strip()]
-        
-        # Create different keyword combinations for better coverage
-        keyword_combinations = self.create_keyword_combinations(clean_keywords)
+        # Prepare search terms with research question priority
+        search_terms_sets = self.prepare_search_terms(keywords, research_question, logger)
         
         if logger:
-            logger.info(f"🔍 Starting search with {len(clean_keywords)} keywords across {len(sources)} sources")
-            logger.info(f"Keywords: {', '.join(clean_keywords[:5])}{'...' if len(clean_keywords) > 5 else ''}")
-            logger.info(f"📝 Created {len(keyword_combinations)} keyword combinations for broader search")
+            logger.info(f"🔍 Starting search with {len(search_terms_sets)} search term sets across {len(sources)} sources")
+            if research_question:
+                logger.info(f"🎯 Primary search: Research question-based terms")
+                logger.info(f"📝 Research question: {research_question[:100]}...")
+            logger.info(f"� Fallback search: {len(keywords) if keywords else 0} traditional keywords")
         
         for source in sources:
             if logger:
@@ -102,63 +102,54 @@ class RobustAcademicSearcher:
             
             articles = []
             method_used = "none"
+            best_search_terms = None
             
-            try:
-                if source == "Google Scholar":
-                    # Try multiple approaches for Google Scholar
-                    articles_gs, method_gs = self.search_google_scholar_robust(clean_keywords, logger)
-                    articles = articles_gs
-                    method_used = method_gs
-                    
-                    # If we didn't get many results, try with different keyword combinations
-                    if len(articles) < self.max_results_per_source // 2:
-                        for combo in keyword_combinations[:2]:  # Try 2 more combinations
-                            additional_articles, _ = self.search_google_scholar_robust(combo, logger)
-                            articles.extend(additional_articles)
-                            if len(articles) >= self.max_results_per_source:
-                                break
-                        method_used = f"{method_gs}_extended"
-                        
-                elif source == "Google Scholar (Scholarly)":
-                    articles, method_used = self.search_scholarly_api(clean_keywords, logger)
-                elif source == "PubMed/MEDLINE":
-                    articles, method_used = self.search_pubmed_robust(clean_keywords, logger)
-                elif source == "DuckDuckGo Academic":
-                    articles, method_used = self.search_duckduckgo_robust(clean_keywords, logger)
-                elif source == "arXiv":
-                    articles, method_used = self.search_arxiv_robust(clean_keywords, logger)
-                elif source == "ResearchGate":
-                    articles, method_used = self.search_researchgate_robust(clean_keywords, logger)
-                else:
-                    # Universal fallback for any source
-                    articles, method_used = self.search_universal_fallback(clean_keywords, source, logger)
-                
-                # Add metadata to articles
-                for article in articles:
-                    article['source'] = source
-                    article['search_method'] = method_used
-                    article['keywords_used'] = ', '.join(clean_keywords)
-                
-                all_articles.extend(articles)
-                
-                if articles:
-                    self.successful_methods.append(f"{source}:{method_used}")
-                    if logger:
-                        logger.success(f"✅ {source}: Found {len(articles)} articles using {method_used}")
-                else:
-                    self.failed_methods.append(f"{source}:{method_used}")
-                    if logger:
-                        logger.warning(f"⚠️ {source}: No articles found using {method_used}")
-                
-                # Random delay between sources
-                if len(sources) > 1:
-                    self.random_delay()
-                    
-            except Exception as e:
-                self.failed_methods.append(f"{source}:error")
+            # Try different search term sets in priority order
+            for search_set in search_terms_sets:
                 if logger:
-                    logger.error(f"❌ {source} failed: {str(e)}")
-                continue
+                    logger.info(f"🔄 Trying {search_set['description']} for {source}...")
+                
+                try:
+                    current_terms = search_set['terms']
+                    temp_articles, temp_method = self.search_single_source_with_terms(current_terms, source, logger)
+                    
+                    if temp_articles:
+                        articles.extend(temp_articles)
+                        method_used = f"{temp_method}_{search_set['type']}"
+                        best_search_terms = current_terms
+                        
+                        if logger:
+                            logger.success(f"✅ Found {len(temp_articles)} articles using {search_set['description']}")
+                        
+                        # If we got good results from research question, we might not need to try keywords
+                        if search_set['type'] == 'research_question' and len(temp_articles) >= self.max_results_per_source // 3:
+                            break
+                    
+                except Exception as e:
+                    if logger:
+                        logger.warning(f"⚠️ {search_set['description']} failed: {str(e)}")
+                    continue
+            
+            # Add metadata to articles
+            for article in articles:
+                article['source'] = source
+                article['search_method'] = method_used
+                article['keywords_used'] = ', '.join(best_search_terms) if best_search_terms else ''
+            
+            all_articles.extend(articles)
+            
+            if articles:
+                self.successful_methods.append(f"{source}:{method_used}")
+                if logger:
+                    logger.success(f"✅ {source}: Found {len(articles)} articles using {method_used}")
+            else:
+                self.failed_methods.append(f"{source}:{method_used}")
+                if logger:
+                    logger.warning(f"⚠️ {source}: No articles found using any search method")
+            
+            # Random delay between sources
+            if len(sources) > 1:
+                self.random_delay()
         
         # Process results
         if all_articles:
@@ -249,6 +240,75 @@ class RobustAcademicSearcher:
             self.failed_methods.append(f"{source}:error")
             if logger:
                 logger.error(f"❌ {source} failed: {str(e)}")
+        
+        return articles
+    
+    def search_single_source_with_terms(self, search_terms: List[str], source: str, logger=None) -> tuple[List[Dict], str]:
+        """
+        Search a single source with specific search terms.
+        """
+        articles = []
+        method_used = "none"
+        
+        if not search_terms:
+            return [], "no_terms"
+        
+        try:
+            if source == "Google Scholar":
+                articles, method_used = self.search_google_scholar_robust(search_terms, logger)
+            elif source == "Google Scholar (Scholarly)":
+                articles, method_used = self.search_scholarly_api(search_terms, logger)
+            elif source == "PubMed/MEDLINE":
+                articles, method_used = self.search_pubmed_robust(search_terms, logger)
+            elif source == "DuckDuckGo Academic":
+                articles, method_used = self.search_duckduckgo_robust(search_terms, logger)
+            elif source == "arXiv":
+                articles, method_used = self.search_arxiv_robust(search_terms, logger)
+            elif source == "ResearchGate":
+                articles, method_used = self.search_researchgate_robust(search_terms, logger)
+            else:
+                # Universal fallback for any source
+                articles, method_used = self.search_universal_fallback(search_terms, source, logger)
+                
+        except Exception as e:
+            if logger:
+                logger.error(f"❌ Error searching {source} with terms: {str(e)}")
+            return [], "error"
+        
+        return articles, method_used
+    
+    def search_single_source_with_research_question(self, keywords: List[str], source: str, research_question: str = None, logger=None) -> List[Dict]:
+        """
+        Search a single source with both research question and keywords support.
+        """
+        # Prepare search terms with research question priority
+        search_terms_sets = self.prepare_search_terms(keywords, research_question, logger)
+        
+        articles = []
+        best_method = "none"
+        
+        # Try different search term sets in priority order
+        for search_set in search_terms_sets:
+            try:
+                temp_articles, temp_method = self.search_single_source_with_terms(search_set['terms'], source, logger)
+                
+                if temp_articles:
+                    articles.extend(temp_articles)
+                    best_method = f"{temp_method}_{search_set['type']}"
+                    
+                    # If we got good results from research question, we might not need to try keywords
+                    if search_set['type'] == 'research_question' and len(temp_articles) >= self.max_results_per_source // 3:
+                        break
+                
+            except Exception as e:
+                if logger:
+                    logger.warning(f"⚠️ Search with {search_set['description']} failed: {str(e)}")
+                continue
+        
+        # Add metadata to articles
+        for article in articles:
+            article['search_method'] = best_method
+            article['search_terms_used'] = search_terms_sets[0]['terms'] if search_terms_sets else []
         
         return articles
     
@@ -488,6 +548,142 @@ class RobustAcademicSearcher:
         has_info = bool(article.get('authors') and article['authors'] != "Unknown")
         
         return has_info
+    
+    def prepare_search_terms(self, keywords: List[str], research_question: str = None, logger=None) -> List[Dict]:
+        """
+        Prepare search terms prioritizing research question over keywords.
+        Returns a list of search term sets with priorities.
+        """
+        search_terms_sets = []
+        
+        # Priority 1: Research question-based search terms
+        if research_question and research_question.strip():
+            rq_terms = self.extract_search_terms_from_research_question(research_question, logger)
+            if rq_terms:
+                search_terms_sets.append({
+                    'terms': rq_terms,
+                    'type': 'research_question',
+                    'priority': 1,
+                    'description': 'Research question based terms'
+                })
+        
+        # Priority 2: Traditional keywords (if available)
+        if keywords:
+            clean_keywords = [kw.strip() for kw in keywords if kw.strip()]
+            if clean_keywords:
+                # Create different keyword combinations
+                keyword_combinations = self.create_keyword_combinations(clean_keywords)
+                
+                for i, combo in enumerate(keyword_combinations):
+                    search_terms_sets.append({
+                        'terms': combo,
+                        'type': 'keywords',
+                        'priority': 2 + i,
+                        'description': f'Keyword combination {i+1}'
+                    })
+        
+        # Priority 3: Fallback - if we have neither, create basic terms
+        if not search_terms_sets:
+            if logger:
+                logger.warning("⚠️ No research question or keywords available, using basic search terms")
+            search_terms_sets.append({
+                'terms': ['research', 'study', 'analysis'],
+                'type': 'fallback',
+                'priority': 10,
+                'description': 'Basic fallback terms'
+            })
+        
+        return search_terms_sets
+    
+    def extract_search_terms_from_research_question(self, research_question: str, logger=None) -> List[str]:
+        """
+        Extract relevant search terms from a research question.
+        """
+        if not research_question or not research_question.strip():
+            return []
+        
+        # Remove common question words and extract key terms
+        import re
+        
+        # Clean the research question
+        rq_clean = research_question.lower().strip()
+        
+        # Remove question words and common stop words
+        stop_words = {
+            'is', 'are', 'was', 'were', 'can', 'could', 'will', 'would', 'should', 'shall',
+            'does', 'do', 'did', 'has', 'have', 'had', 'the', 'a', 'an', 'and', 'or', 'but',
+            'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'from', 'about', 'into',
+            'through', 'there', 'what', 'which', 'who', 'when', 'where', 'why', 'how',
+            'that', 'this', 'these', 'those', 'between', 'among', 'relationship', 'correlation',
+            'effect', 'impact', 'influence', 'association', 'comparison'
+        }
+        
+        # Split into words and clean
+        words = re.findall(r'\b[a-zA-Z][a-zA-Z0-9]*\b', rq_clean)
+        
+        # Filter out stop words and short words
+        meaningful_words = [
+            word for word in words 
+            if len(word) > 2 and word.lower() not in stop_words
+        ]
+        
+        # Extract key phrases (multi-word terms)
+        key_phrases = self.extract_key_phrases(research_question)
+        
+        # Combine and prioritize terms
+        search_terms = []
+        
+        # Add key phrases first (they're usually more specific)
+        search_terms.extend(key_phrases)
+        
+        # Add meaningful individual words
+        search_terms.extend(meaningful_words[:10])  # Limit to top 10 words
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_terms = []
+        for term in search_terms:
+            term_lower = term.lower()
+            if term_lower not in seen:
+                seen.add(term_lower)
+                unique_terms.append(term)
+        
+        if logger and unique_terms:
+            logger.info(f"🎯 Extracted search terms from research question: {', '.join(unique_terms[:5])}{'...' if len(unique_terms) > 5 else ''}")
+        
+        return unique_terms[:15]  # Limit to top 15 terms
+    
+    def extract_key_phrases(self, text: str) -> List[str]:
+        """
+        Extract key phrases (2-3 word combinations) from text.
+        """
+        import re
+        
+        # Common academic/research patterns
+        patterns = [
+            r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b',  # Capitalized phrases
+            r'\b(\w+\s+(?:levels?|rates?|effects?|factors?|methods?|techniques?|approaches?))\b',  # Method/outcome phrases
+            r'\b(\w+\s+\w+(?:\s+\w+)?)\b'  # General 2-3 word phrases
+        ]
+        
+        phrases = []
+        text_clean = re.sub(r'[^\w\s]', ' ', text)  # Remove punctuation
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, text_clean, re.IGNORECASE)
+            phrases.extend(matches)
+        
+        # Filter out common phrases and short phrases
+        filtered_phrases = [
+            phrase.strip() for phrase in phrases 
+            if len(phrase.strip()) > 5 and 
+            not any(word in phrase.lower() for word in ['there is', 'there are', 'can be', 'will be'])
+        ]
+        
+        # Remove duplicates
+        unique_phrases = list(dict.fromkeys(filtered_phrases))
+        
+        return unique_phrases[:8]  # Limit to top 8 phrases
     
     def create_keyword_combinations(self, keywords: List[str]) -> List[List[str]]:
         """Create different keyword combinations for broader search coverage."""

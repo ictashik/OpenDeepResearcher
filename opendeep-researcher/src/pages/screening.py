@@ -37,6 +37,23 @@ def show(logger):
         if col not in articles_df.columns:
             articles_df[col] = ""
     
+    # Ensure data types are correct and handle any problematic values
+    try:
+        # Convert critical columns to string type to avoid type issues
+        articles_df['ai_recommendation'] = articles_df['ai_recommendation'].astype(str)
+        articles_df['ai_reasoning'] = articles_df['ai_reasoning'].astype(str)
+        articles_df['final_decision'] = articles_df['final_decision'].astype(str)
+        articles_df['reviewer_notes'] = articles_df['reviewer_notes'].astype(str)
+        
+        # Replace 'nan' strings with empty strings
+        for col in required_columns:
+            articles_df.loc[articles_df[col] == 'nan', col] = ""
+            
+    except Exception as e:
+        st.error(f"Error initializing columns: {str(e)}")
+        logger.error(f"Column initialization error: {str(e)}")
+        return
+    
     logger.info(f"Loaded {len(articles_df)} articles for screening")
     
     st.success(f"📚 Found {len(articles_df)} articles ready for screening")
@@ -244,44 +261,80 @@ def show(logger):
             
             with col2:
                 if st.button(" Generate Screening Report", use_container_width=True):
-                    # Generate screening statistics
-                    final_include = (edited_df['final_decision'] == 'Include').sum()
-                    final_exclude = (edited_df['final_decision'] == 'Exclude').sum()
-                    uncertain = (edited_df['final_decision'] == 'Uncertain').sum()
-                    
-                    report = f"""
-                    ## Screening Report
-                    
-                    **Total Articles Screened:** {len(edited_df)}
-                    
-                    **Final Decisions:**
-                    - Include: {final_include}
-                    - Exclude: {final_exclude}
-                    - Uncertain: {uncertain}
-                    
-                    **AI vs Manual Agreement:**
-                    - AI Include → Manual Include: {((edited_df['ai_recommendation'] == 'Include') & (edited_df['final_decision'] == 'Include')).sum()}
-                    - AI Exclude → Manual Exclude: {((edited_df['ai_recommendation'] == 'Exclude') & (edited_df['final_decision'] == 'Exclude')).sum()}
-                    - Disagreements: {(edited_df['ai_recommendation'] != edited_df['final_decision']).sum()}
-                    """
-                    
-                    st.markdown(report)
+                    try:
+                        # Generate screening statistics with safe comparisons
+                        final_include = (edited_df['final_decision'].str.lower() == 'include').sum()
+                        final_exclude = (edited_df['final_decision'].str.lower() == 'exclude').sum()
+                        uncertain = (edited_df['final_decision'].str.lower() == 'uncertain').sum()
+                        
+                        # Safe comparisons for agreement analysis
+                        ai_include_manual_include = ((edited_df['ai_recommendation'].str.lower() == 'include') & 
+                                                   (edited_df['final_decision'].str.lower() == 'include')).sum()
+                        ai_exclude_manual_exclude = ((edited_df['ai_recommendation'].str.lower() == 'exclude') & 
+                                                   (edited_df['final_decision'].str.lower() == 'exclude')).sum()
+                        disagreements = (edited_df['ai_recommendation'].str.lower() != edited_df['final_decision'].str.lower()).sum()
+                        
+                        report = f"""
+                        ## Screening Report
+                        
+                        **Total Articles Screened:** {len(edited_df)}
+                        
+                        **Final Decisions:**
+                        - Include: {final_include}
+                        - Exclude: {final_exclude}
+                        - Uncertain: {uncertain}
+                        
+                        **AI vs Manual Agreement:**
+                        - AI Include → Manual Include: {ai_include_manual_include}
+                        - AI Exclude → Manual Exclude: {ai_exclude_manual_exclude}
+                        - Disagreements: {disagreements}
+                        """
+                        
+                        st.markdown(report)
+                        
+                    except Exception as e:
+                        st.error(f"Error generating screening report: {str(e)}")
+                        logger.error(f"Screening report error: {str(e)}")
 
     with tab3:
         st.subheader("Screening Results Summary")
         
-        # Load final screened results
-        screened_articles = articles_df[articles_df['final_decision'].notna() & (articles_df['final_decision'] != "")].copy()
-        
-        if screened_articles.empty:
-            st.info("📋 No final screening decisions available yet.")
-        else:
-            # Summary statistics
-            total_screened = len(screened_articles)
-            included = (screened_articles['final_decision'] == 'Include').sum()
-            excluded = (screened_articles['final_decision'] == 'Exclude').sum()
-            uncertain = (screened_articles['final_decision'] == 'Uncertain').sum()
+        try:
+            # Ensure final_decision column exists and has proper values
+            if 'final_decision' not in articles_df.columns:
+                articles_df['final_decision'] = ""
             
+            # Convert any non-string values to strings
+            articles_df['final_decision'] = articles_df['final_decision'].astype(str)
+            
+            # Replace 'nan' strings with empty strings
+            articles_df.loc[articles_df['final_decision'] == 'nan', 'final_decision'] = ""
+            
+            # Load final screened results with safer filtering
+            mask = (articles_df['final_decision'].notna()) & (articles_df['final_decision'] != "") & (articles_df['final_decision'] != 'nan')
+            screened_articles = articles_df[mask].copy()
+            
+            if screened_articles.empty:
+                st.info("📋 No final screening decisions available yet.")
+            else:
+                # Summary statistics with safe comparisons
+                total_screened = len(screened_articles)
+                included = (screened_articles['final_decision'].str.lower() == 'include').sum()
+                excluded = (screened_articles['final_decision'].str.lower() == 'exclude').sum()
+                uncertain = (screened_articles['final_decision'].str.lower() == 'uncertain').sum()
+                
+        except Exception as e:
+            st.error(f"Error in screening summary: {str(e)}")
+            logger.error(f"Screening summary error: {str(e)}")
+            # Debug information
+            st.write("Debug info:")
+            st.write(f"DataFrame columns: {list(articles_df.columns)}")
+            if 'final_decision' in articles_df.columns:
+                st.write(f"final_decision unique values: {articles_df['final_decision'].unique()}")
+                st.write(f"final_decision data type: {articles_df['final_decision'].dtype}")
+            return
+        
+        if screened_articles is not None and not screened_articles.empty:
             col1, col2, col3, col4 = st.columns(4)
             
             with col1:
@@ -311,7 +364,12 @@ def show(logger):
             if included > 0:
                 st.markdown("**Articles Selected for Full-Text Review:**")
                 
-                included_articles = screened_articles[screened_articles['final_decision'] == 'Include']
+                # Safe filtering for included articles
+                try:
+                    included_articles = screened_articles[screened_articles['final_decision'].str.lower() == 'include']
+                except Exception as e:
+                    st.error(f"Error filtering included articles: {str(e)}")
+                    included_articles = pd.DataFrame()  # Empty dataframe as fallback
                 
                 for _, article in included_articles.iterrows():
                     with st.expander(f" {article['title']}"):

@@ -25,11 +25,27 @@ def show(logger):
         st.warning("No screened articles found. Please complete the screening phase first.")
         return
 
+    # Initialize required columns for analysis
+    required_columns = ['full_text_status', 'pdf_path']
+    for col in required_columns:
+        if col not in articles_df.columns:
+            articles_df[col] = 'Awaiting' if col == 'full_text_status' else ""
+
     # Filter for included articles only
-    if 'final_decision' in articles_df.columns:
-        included_articles = articles_df[articles_df['final_decision'] == 'Include']
-    else:
-        included_articles = articles_df
+    try:
+        if 'final_decision' in articles_df.columns:
+            included_articles = articles_df[articles_df['final_decision'] == 'Include']
+        else:
+            included_articles = articles_df
+    except Exception as e:
+        st.error(f"Error filtering included articles: {str(e)}")
+        logger.error(f"Article filtering error: {str(e)}")
+        included_articles = articles_df  # Use all articles as fallback
+    
+    # Initialize full_text_status column if it doesn't exist (backup safety)
+    if 'full_text_status' not in included_articles.columns:
+        included_articles = included_articles.copy()
+        included_articles['full_text_status'] = 'Awaiting'
     
     if included_articles.empty:
         st.warning("No articles were included during screening. Please review your screening results.")
@@ -93,9 +109,27 @@ def show(logger):
                         with open(file_path, "wb") as f:
                             f.write(pdf_file.getbuffer())
                         
-                        # Update article status
-                        articles_df.loc[articles_df['id'] == article.get('id', idx), 'full_text_status'] = 'Acquired'
-                        articles_df.loc[articles_df['id'] == article.get('id', idx), 'pdf_path'] = str(file_path)
+                        # Update article status - find a safe way to identify the article
+                        try:
+                            # Try to find by ID if it exists
+                            if 'id' in articles_df.columns and 'id' in article:
+                                mask = articles_df['id'] == article.get('id', idx)
+                            else:
+                                # Fallback to title matching
+                                mask = articles_df['title'] == article['title']
+                            
+                            # Ensure columns exist before updating
+                            if 'full_text_status' not in articles_df.columns:
+                                articles_df['full_text_status'] = 'Awaiting'
+                            if 'pdf_path' not in articles_df.columns:
+                                articles_df['pdf_path'] = ""
+                            
+                            articles_df.loc[mask, 'full_text_status'] = 'Acquired'
+                            articles_df.loc[mask, 'pdf_path'] = str(file_path)
+                            
+                        except Exception as e:
+                            st.error(f"Error updating article status: {str(e)}")
+                            logger.error(f"Article status update error: {str(e)}")
                         
                         logger.success(f"Uploaded PDF for: {article['title'][:50]}...")
                         st.success("PDF uploaded successfully!")
@@ -125,7 +159,16 @@ def show(logger):
             st.write(f"• {field.replace('_', ' ').title()}")
         
         # Articles with full text available
-        full_text_articles = included_articles[included_articles['full_text_status'] == 'Acquired']
+        try:
+            # Ensure full_text_status column exists
+            if 'full_text_status' not in included_articles.columns:
+                included_articles['full_text_status'] = 'Awaiting'
+            
+            full_text_articles = included_articles[included_articles['full_text_status'] == 'Acquired']
+        except Exception as e:
+            st.error(f"Error accessing full text status: {str(e)}")
+            logger.error(f"Full text status error: {str(e)}")
+            full_text_articles = pd.DataFrame()  # Empty dataframe as fallback
         
         if full_text_articles.empty:
             st.warning(" No articles with full text available. Please upload PDFs in the Document Management tab.")
