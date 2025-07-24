@@ -18,26 +18,27 @@ def show(logger):
 
     logger.info(f"Loading screening page for project: {project_id}")
 
-    # Load articles
+    # Load collected articles
     articles_df = load_raw_articles(project_id)
     
     if articles_df.empty:
-        st.warning("📭 No articles found for screening.")
-        st.info("**Next steps:**")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("• Complete the **Scoping** phase to define search parameters")
-        
-        with col2:
-            st.markdown("• Use **Data Collection** to search and gather articles")
-        
-        if st.button("🔍 Go to Data Collection", use_container_width=True):
-            st.session_state.page = "Data Collection"
-            st.rerun()
-        
+        st.warning("⚠️ No articles found. Please complete the Data Collection phase first.")
         return
-
+    
+    # Ensure DataFrame has the basic structure
+    if not isinstance(articles_df, pd.DataFrame):
+        st.error("❌ Invalid data format. Please check the collected articles.")
+        logger.error("Articles data is not a proper DataFrame")
+        return
+    
+    # Initialize required columns safely
+    required_columns = ['ai_recommendation', 'ai_reasoning', 'final_decision', 'reviewer_notes']
+    for col in required_columns:
+        if col not in articles_df.columns:
+            articles_df[col] = ""
+    
+    logger.info(f"Loaded {len(articles_df)} articles for screening")
+    
     st.success(f"📚 Found {len(articles_df)} articles ready for screening")
 
     # Initialize Ollama client
@@ -75,11 +76,6 @@ def show(logger):
                 st.write(inclusion_criteria)
         else:
             st.warning(" No inclusion criteria found. Please complete the Scoping phase first.")
-        
-        # Check if AI screening has been done
-        if 'ai_recommendation' not in articles_df.columns:
-            articles_df['ai_recommendation'] = ""
-            articles_df['ai_reasoning'] = ""
         
         # Count articles already screened
         screened_count = (articles_df['ai_recommendation'] != "").sum()
@@ -137,6 +133,7 @@ def show(logger):
             st.markdown("---")
             st.markdown("**Individual Article Processing:**")
             
+            # Filter for unscreened articles
             unscreened_articles = articles_df[articles_df['ai_recommendation'] == ""]
             
             if not unscreened_articles.empty:
@@ -176,7 +173,7 @@ def show(logger):
         screened_articles = articles_df[articles_df['ai_recommendation'] != ""].copy()
         
         if screened_articles.empty:
-            st.warning(" No AI-screened articles available. Please run AI screening first.")
+            st.warning("📋 No AI-screened articles available. Please run AI screening first.")
         else:
             # Add final decision column if it doesn't exist
             if 'final_decision' not in screened_articles.columns:
@@ -274,10 +271,10 @@ def show(logger):
         st.subheader("Screening Results Summary")
         
         # Load final screened results
-        screened_articles = articles_df[articles_df.get('final_decision', '') != ""].copy()
+        screened_articles = articles_df[articles_df['final_decision'].notna() & (articles_df['final_decision'] != "")].copy()
         
         if screened_articles.empty:
-            st.info(" No final screening decisions available yet.")
+            st.info("📋 No final screening decisions available yet.")
         else:
             # Summary statistics
             total_screened = len(screened_articles)

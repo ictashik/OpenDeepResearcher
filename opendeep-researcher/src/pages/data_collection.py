@@ -164,15 +164,20 @@ def show(logger):
         # Search configuration panel
         st.markdown("**🎯 Search Execution:**")
         
+        # Show tip about using multiple sources
+        st.info("💡 **Tip:** Select multiple sources including 'Google Scholar (Scholarly)' and 'DuckDuckGo Academic' to get more comprehensive results. The system will now try multiple search strategies to find more articles.")
+        
         col1, col2 = st.columns([2, 1])
         
         with col1:
             # Allow user to modify search parameters
+            default_sources = st.session_state.get("recommended_sources", search_config.get("selected_sources", []))
+            
             search_sources = st.multiselect(
                 "Select sources to search:",
-                options=search_config.get("selected_sources", []),
-                default=search_config.get("selected_sources", []),
-                help="Choose which databases to search"
+                options=search_config.get("selected_sources", []) + ["Google Scholar (Scholarly)", "DuckDuckGo Academic", "arXiv", "ResearchGate"],
+                default=default_sources,
+                help="Choose which databases to search. More sources = more comprehensive results."
             )
             
             max_results_override = st.number_input(
@@ -181,8 +186,29 @@ def show(logger):
                 max_value=500,
                 value=max_results,
                 step=10,
-                help="Maximum number of articles to collect from each source"
+                help="Maximum number of articles to collect from each source. Higher values will give you more comprehensive results."
             )
+            
+            # Add recommended source combinations
+            st.markdown("**📋 Recommended Source Combinations:**")
+            
+            recommendations = {
+                "Medical/Health Research": ["PubMed/MEDLINE", "Google Scholar (Scholarly)", "EMBASE"],
+                "Multidisciplinary": ["Google Scholar", "Google Scholar (Scholarly)", "DuckDuckGo Academic", "arXiv"],
+                "Technology/Computer Science": ["Google Scholar (Scholarly)", "arXiv", "DuckDuckGo Academic"],
+                "Psychology/Social Sciences": ["PsycINFO", "Google Scholar (Scholarly)", "DuckDuckGo Academic"],
+                "Maximum Coverage": ["Google Scholar", "Google Scholar (Scholarly)", "PubMed/MEDLINE", "DuckDuckGo Academic", "arXiv", "ResearchGate"]
+            }
+            
+            selected_combo = st.selectbox(
+                "Quick select recommended sources:",
+                options=["Custom"] + list(recommendations.keys()),
+                help="Choose a pre-configured set of sources optimal for your research area"
+            )
+            
+            if selected_combo != "Custom" and st.button("Apply Recommended Sources"):
+                st.session_state.recommended_sources = recommendations[selected_combo]
+                st.rerun()
         
         with col2:
             st.markdown("**🔍 Search Preview:**")
@@ -205,26 +231,203 @@ def show(logger):
                     delay_range=(1, 2)
                 )
                 
-                # Show progress
+                # Create progress tracking containers
                 progress_container = st.empty()
+                live_table_container = st.empty()
+                logs_container = st.empty()
                 status_container = st.empty()
                 
+                # Initialize progress tracking
                 with progress_container.container():
                     st.markdown("**🔄 Search Progress:**")
-                    progress_bar = st.progress(0)
+                    overall_progress = st.progress(0)
+                    progress_text = st.empty()
+                
+                # Initialize live results table
+                live_results_data = []
+                
+                # Start search
+                start_time = time.time()
+                
+                # Custom logger for real-time updates
+                class LiveLogger:
+                    def __init__(self, logs_container):
+                        self.logs_container = logs_container
+                        self.logs = []
+                        self.max_logs = 15  # Show more logs
                     
-                    # Start search
-                    start_time = time.time()
+                    def info(self, message):
+                        timestamp = time.strftime("%H:%M:%S")
+                        log_entry = f"[{timestamp}] ℹ️ {message}"
+                        self.logs.append(log_entry)
+                        self._update_display()
+                        logger.info(message)
                     
-                    try:
-                        new_articles_df = searcher.search_all_sources(
-                            keywords=included_keywords,
-                            sources=search_sources,
-                            logger=logger
-                        )
+                    def success(self, message):
+                        timestamp = time.strftime("%H:%M:%S")
+                        log_entry = f"[{timestamp}] ✅ {message}"
+                        self.logs.append(log_entry)
+                        self._update_display()
+                        logger.success(message)
+                    
+                    def warning(self, message):
+                        timestamp = time.strftime("%H:%M:%S")
+                        log_entry = f"[{timestamp}] ⚠️ {message}"
+                        self.logs.append(log_entry)
+                        self._update_display()
+                        logger.warning(message)
+                    
+                    def error(self, message):
+                        timestamp = time.strftime("%H:%M:%S")
+                        log_entry = f"[{timestamp}] ❌ {message}"
+                        self.logs.append(log_entry)
+                        self._update_display()
+                        logger.error(message)
+                    
+                    def _update_display(self):
+                        # Show recent log entries with color coding
+                        recent_logs = self.logs[-self.max_logs:]
+                        with self.logs_container.container():
+                            st.markdown("**📋 Live Search Logs:**")
+                            
+                            # Create a scrollable log area
+                            log_text = ""
+                            for log in recent_logs:
+                                log_text += log + "\n"
+                            
+                            # Use code block for better formatting
+                            st.code(log_text, language=None)
+                
+                live_logger = LiveLogger(logs_container)
+                
+                try:
+                    live_logger.info("🚀 Starting comprehensive literature search...")
+                    live_logger.info(f"📊 Searching {len(search_sources)} sources for up to {max_results_override} results each")
+                    
+                    # Initialize searcher with live updates
+                    searcher = RobustAcademicSearcher(
+                        max_results_per_source=max_results_override,
+                        delay_range=(1, 2)
+                    )
+                    
+                    # Track progress per source
+                    total_sources = len(search_sources)
+                    completed_sources = 0
+                    all_source_results = []
+                    
+                    # Create live results tracking
+                    def update_live_table():
+                        if live_results_data:
+                            df_live = pd.DataFrame(live_results_data)
+                            with live_table_container.container():
+                                st.markdown("**📊 Live Search Results:**")
+                                
+                                # Style the dataframe
+                                styled_df = df_live.style.apply(lambda x: [
+                                    'background-color: #d4edda; color: #155724' if '✅' in str(val) 
+                                    else 'background-color: #fff3cd; color: #856404' if '⚠️' in str(val)
+                                    else 'background-color: #f8d7da; color: #721c24' if '❌' in str(val)
+                                    else '' for val in x
+                                ], subset=['Status'])
+                                
+                                st.dataframe(styled_df, use_container_width=True)
+                                
+                                # Add summary stats
+                                total_found = df_live['Articles Found'].sum()
+                                completed = len(df_live[df_live['Status'].str.contains('✅')])
+                                failed = len(df_live[df_live['Status'].str.contains('❌')])
+                                
+                                col1, col2, col3 = st.columns(3)
+                                with col1:
+                                    st.metric("Total Articles Found", total_found)
+                                with col2:
+                                    st.metric("Sources Completed", completed)
+                                with col3:
+                                    st.metric("Sources Failed", failed)
+                    
+                    # Search each source individually for better progress tracking
+                    for i, source in enumerate(search_sources):
+                        # Update progress text with more detail
+                        progress_text.text(f"🔍 Searching {source}... ({i+1}/{total_sources}) - Please wait, this may take a few moments")
+                        live_logger.info(f"🎯 Starting search for {source} ({i+1}/{total_sources})...")
                         
-                        # Update progress
-                        progress_bar.progress(1.0)
+                        # Show current source being searched
+                        current_source_status = f"🔄 Currently searching: **{source}**"
+                        
+                        try:
+                            # Add estimated time info
+                            if i > 0:
+                                avg_time_per_source = (time.time() - start_time) / i
+                                remaining_sources = total_sources - i
+                                estimated_remaining = avg_time_per_source * remaining_sources
+                                live_logger.info(f"⏱️ Estimated time remaining: {estimated_remaining:.1f} seconds")
+                            
+                            # Search single source
+                            source_articles = searcher.search_single_source(
+                                keywords=included_keywords,
+                                source=source,
+                                logger=live_logger
+                            )
+                            
+                            # Update live results
+                            if source_articles:
+                                live_results_data.append({
+                                    'Source': source,
+                                    'Articles Found': len(source_articles),
+                                    'Status': '✅ Completed',
+                                    'Last Updated': time.strftime("%H:%M:%S")
+                                })
+                                all_source_results.extend(source_articles)
+                                live_logger.success(f"✅ {source}: Found {len(source_articles)} articles")
+                            else:
+                                live_results_data.append({
+                                    'Source': source,
+                                    'Articles Found': 0,
+                                    'Status': '⚠️ No results',
+                                    'Last Updated': time.strftime("%H:%M:%S")
+                                })
+                                live_logger.warning(f"⚠️ {source}: No articles found")
+                            
+                            # Update progress and live table
+                            completed_sources += 1
+                            overall_progress.progress(completed_sources / total_sources)
+                            update_live_table()
+                            
+                            # Small delay to make progress visible
+                            time.sleep(0.5)
+                            
+                        except Exception as e:
+                            live_results_data.append({
+                                'Source': source,
+                                'Articles Found': 0,
+                                'Status': f'❌ Error: {str(e)[:30]}...',
+                                'Last Updated': time.strftime("%H:%M:%S")
+                            })
+                            live_logger.error(f"❌ {source} failed: {str(e)}")
+                            completed_sources += 1
+                            overall_progress.progress(completed_sources / total_sources)
+                            update_live_table()
+                            
+                            # Small delay for error visibility
+                            time.sleep(0.5)
+                    
+                    # Finalize results
+                    overall_progress.progress(1.0)
+                    progress_text.text("🔄 Processing and deduplicating results...")
+                    
+                    if all_source_results:
+                        # Convert to DataFrame
+                        new_articles_df = pd.DataFrame(all_source_results)
+                        new_articles_df['id'] = range(1, len(new_articles_df) + 1)
+                        
+                        # Remove duplicates
+                        live_logger.info("🧹 Removing duplicate articles...")
+                        new_articles_df = searcher.remove_duplicates(new_articles_df, live_logger)
+                        
+                        # Reassign IDs after deduplication
+                        new_articles_df['id'] = range(1, len(new_articles_df) + 1)
+                        
+                        live_logger.success(f"🎉 Found {len(new_articles_df)} unique articles total!")
                         
                         # Get search statistics
                         search_stats = searcher.get_statistics()
@@ -233,10 +436,11 @@ def show(logger):
                             # Handle append vs replace
                             if not existing_articles.empty and st.session_state.get("append_mode", True):
                                 # Combine with existing articles
+                                live_logger.info("🔄 Combining with existing articles...")
                                 combined_df = pd.concat([existing_articles, new_articles_df], ignore_index=True)
                                 
                                 # Remove duplicates
-                                combined_df = searcher.remove_duplicates(combined_df, logger)
+                                combined_df = searcher.remove_duplicates(combined_df, live_logger)
                                 
                                 # Reassign IDs
                                 combined_df['id'] = range(1, len(combined_df) + 1)
@@ -245,16 +449,17 @@ def show(logger):
                                 new_count = len(new_articles_df)
                                 total_count = len(final_df)
                                 
-                                logger.success(f"Added {new_count} new articles. Total: {total_count}")
+                                live_logger.success(f"📚 Added {new_count} new articles. Total: {total_count}")
                                 
                             else:
                                 final_df = new_articles_df
                                 new_count = len(final_df)
                                 total_count = new_count
                                 
-                                logger.success(f"Collected {new_count} articles")
+                                live_logger.success(f"📚 Collected {new_count} articles")
                             
                             # Save articles
+                            live_logger.info("💾 Saving articles to database...")
                             save_raw_articles(project_id, final_df)
                             
                             # Update project status
@@ -262,7 +467,7 @@ def show(logger):
                             projects_df.loc[projects_df['project_id'] == project_id, 'status'] = 'Data Collected'
                             save_projects(projects_df)
                             
-                            # Show results
+                            # Show final results
                             elapsed_time = time.time() - start_time
                             
                             with status_container.container():
@@ -278,11 +483,11 @@ def show(logger):
                                 
                                 with col3:
                                     successful_methods = len(search_stats.get('successful_methods', []))
-                                    st.metric("Successful Methods", successful_methods)
+                                    st.metric("Successful Sources", successful_methods)
                                 
                                 with col4:
                                     failed_methods = len(search_stats.get('failed_methods', []))
-                                    st.metric("Failed Methods", failed_methods)
+                                    st.metric("Failed Sources", failed_methods)
                                 
                                 # Show detailed statistics
                                 if search_stats.get('failed_methods'):
@@ -303,6 +508,7 @@ def show(logger):
                         else:
                             with status_container.container():
                                 st.warning("⚠️ No articles found with the current search parameters.")
+                                live_logger.warning("⚠️ No articles found across all sources")
                                 
                                 # Show detailed error information
                                 if search_stats.get('failed_methods'):
@@ -325,22 +531,27 @@ def show(logger):
                                 st.markdown("• Check your inclusion criteria")
                                 st.markdown("• Consider using more general search terms")
                     
-                    except Exception as e:
-                        progress_bar.progress(1.0)
+                    else:
                         with status_container.container():
-                            st.error(f"❌ Search failed: {str(e)}")
-                            logger.error(f"Web search failed: {str(e)}")
-                            
-                            # Try to get partial statistics
-                            try:
-                                search_stats = searcher.get_statistics()
-                                if search_stats.get('failed_methods'):
-                                    with st.expander("🔍 Error Analysis"):
-                                        st.write("**Failed Methods:**")
-                                        for method in search_stats['failed_methods']:
-                                            st.markdown(f"• {method}")
-                            except:
-                                pass
+                            st.warning("⚠️ No articles found with the current search parameters.")
+                            live_logger.warning("⚠️ No valid articles found after processing")
+                    
+                except Exception as e:
+                    overall_progress.progress(1.0)
+                    with status_container.container():
+                        st.error(f"❌ Search failed: {str(e)}")
+                        live_logger.error(f"❌ Search failed: {str(e)}")
+                        
+                        # Try to get partial statistics
+                        try:
+                            search_stats = searcher.get_statistics()
+                            if search_stats.get('failed_methods'):
+                                with st.expander("🔍 Error Analysis"):
+                                    st.write("**Failed Methods:**")
+                                    for method in search_stats['failed_methods']:
+                                        st.markdown(f"• {method}")
+                        except:
+                            pass
         
         else:
             st.warning("⚠️ Please select at least one data source to search.")

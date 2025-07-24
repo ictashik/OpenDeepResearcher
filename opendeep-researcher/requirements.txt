@@ -7,3 +7,4 @@ beautifulsoup4
 lxml
 ddgs
 numpy<2.0
+scholarly

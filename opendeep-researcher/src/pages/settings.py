@@ -9,6 +9,33 @@ def show(logger):
     # Load current configuration
     config = load_config()
     
+    # Migrate old config values to new format
+    if "search_sources" in config:
+        old_to_new_mapping = {
+            "PubMed": "PubMed/MEDLINE",
+            "Google Scholar": "Google Scholar",
+            "Scopus": "Scopus", 
+            "Web of Science": "Web of Science",
+            "EMBASE": "EMBASE"
+        }
+        
+        updated_sources = []
+        needs_update = False
+        
+        for source in config["search_sources"]:
+            if source in old_to_new_mapping:
+                new_source = old_to_new_mapping[source]
+                updated_sources.append(new_source)
+                if new_source != source:
+                    needs_update = True
+            else:
+                updated_sources.append(source)
+        
+        if needs_update:
+            config["search_sources"] = updated_sources
+            save_config(config)
+            logger.info("Updated search source names in configuration")
+    
     # Ollama Configuration Section
     st.markdown("#### Ollama Configuration")
     
@@ -160,10 +187,36 @@ def show(logger):
     st.markdown("---")
     st.markdown("#### Search Configuration")
     
+    # Map old config values to new option names
+    available_options = ["PubMed/MEDLINE", "Google Scholar", "Google Scholar (Scholarly)", "Scopus", "Web of Science", "EMBASE", "PsycINFO", "DuckDuckGo Academic", "arXiv", "ResearchGate"]
+    
+    # Get current config with fallback
+    current_sources = config.get("search_sources", ["PubMed/MEDLINE", "Google Scholar"])
+    
+    # Map old values to new values
+    mapping = {
+        "PubMed": "PubMed/MEDLINE",
+        "Google Scholar": "Google Scholar",
+        "Scopus": "Scopus",
+        "Web of Science": "Web of Science",
+        "EMBASE": "EMBASE"
+    }
+    
+    # Convert old config values to new format
+    mapped_sources = []
+    for source in current_sources:
+        mapped_source = mapping.get(source, source)
+        if mapped_source in available_options:
+            mapped_sources.append(mapped_source)
+    
+    # Ensure we have at least some defaults
+    if not mapped_sources:
+        mapped_sources = ["PubMed/MEDLINE", "Google Scholar"]
+    
     search_sources = st.multiselect(
         "Default Search Sources",
-        options=["PubMed", "Google Scholar", "Scopus", "Web of Science", "EMBASE"],
-        default=config.get("search_sources", ["PubMed", "Google Scholar"]),
+        options=available_options,
+        default=mapped_sources,
         help="Select which databases to search by default"
     )
     
@@ -203,7 +256,7 @@ def show(logger):
                 "extraction_model": "",
                 "models_list": [],
                 "extraction_prompts": default_prompts,
-                "search_sources": ["PubMed", "Google Scholar"],
+                "search_sources": ["PubMed/MEDLINE", "Google Scholar"],
                 "max_results_per_source": 100
             }
             save_config(default_config)

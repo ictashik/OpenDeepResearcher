@@ -359,6 +359,11 @@ def show(logger):
                 "best_for": "Multidisciplinary research, grey literature",
                 "coverage": "Varies"
             },
+            "Google Scholar (Scholarly)": {
+                "description": "Advanced Google Scholar API access",
+                "best_for": "Reliable Scholar access with detailed metadata",
+                "coverage": "Varies"
+            },
             "Scopus": {
                 "description": "Abstract and citation database",
                 "best_for": "Science, technology, medicine, social sciences",
@@ -378,6 +383,21 @@ def show(logger):
                 "description": "Psychology database",
                 "best_for": "Psychology and behavioral sciences",
                 "coverage": "1800s-present"
+            },
+            "DuckDuckGo Academic": {
+                "description": "Academic-focused web search",
+                "best_for": "Open access papers and grey literature",
+                "coverage": "Web-wide"
+            },
+            "arXiv": {
+                "description": "Preprint repository for physics, mathematics, CS",
+                "best_for": "Latest research in STEM fields",
+                "coverage": "1991-present"
+            },
+            "ResearchGate": {
+                "description": "Academic social network and repository",
+                "best_for": "Connecting research and finding papers",
+                "coverage": "Varies"
             }
         }
         

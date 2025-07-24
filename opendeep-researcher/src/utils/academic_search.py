@@ -15,13 +15,20 @@ import random
 import logging
 from pathlib import Path
 
+# Import scholarly package
+try:
+    from scholarly import scholarly
+    SCHOLARLY_AVAILABLE = True
+except ImportError:
+    SCHOLARLY_AVAILABLE = False
+
 class RobustAcademicSearcher:
     """
     A robust academic paper searcher with multiple strategies and fallbacks.
     Designed to actually find papers when other methods fail.
     """
     
-    def __init__(self, max_results_per_source: int = 50, delay_range: tuple = (1, 3)):
+    def __init__(self, max_results_per_source: int = 100, delay_range: tuple = (1, 3)):
         self.max_results_per_source = max_results_per_source
         self.delay_range = delay_range
         self.session = requests.Session()
@@ -81,9 +88,13 @@ class RobustAcademicSearcher:
         # Clean and prepare keywords
         clean_keywords = [kw.strip() for kw in keywords if kw.strip()]
         
+        # Create different keyword combinations for better coverage
+        keyword_combinations = self.create_keyword_combinations(clean_keywords)
+        
         if logger:
             logger.info(f"🔍 Starting search with {len(clean_keywords)} keywords across {len(sources)} sources")
             logger.info(f"Keywords: {', '.join(clean_keywords[:5])}{'...' if len(clean_keywords) > 5 else ''}")
+            logger.info(f"📝 Created {len(keyword_combinations)} keyword combinations for broader search")
         
         for source in sources:
             if logger:
@@ -94,11 +105,30 @@ class RobustAcademicSearcher:
             
             try:
                 if source == "Google Scholar":
-                    articles, method_used = self.search_google_scholar_robust(clean_keywords, logger)
+                    # Try multiple approaches for Google Scholar
+                    articles_gs, method_gs = self.search_google_scholar_robust(clean_keywords, logger)
+                    articles = articles_gs
+                    method_used = method_gs
+                    
+                    # If we didn't get many results, try with different keyword combinations
+                    if len(articles) < self.max_results_per_source // 2:
+                        for combo in keyword_combinations[:2]:  # Try 2 more combinations
+                            additional_articles, _ = self.search_google_scholar_robust(combo, logger)
+                            articles.extend(additional_articles)
+                            if len(articles) >= self.max_results_per_source:
+                                break
+                        method_used = f"{method_gs}_extended"
+                        
+                elif source == "Google Scholar (Scholarly)":
+                    articles, method_used = self.search_scholarly_api(clean_keywords, logger)
                 elif source == "PubMed/MEDLINE":
                     articles, method_used = self.search_pubmed_robust(clean_keywords, logger)
                 elif source == "DuckDuckGo Academic":
                     articles, method_used = self.search_duckduckgo_robust(clean_keywords, logger)
+                elif source == "arXiv":
+                    articles, method_used = self.search_arxiv_robust(clean_keywords, logger)
+                elif source == "ResearchGate":
+                    articles, method_used = self.search_researchgate_robust(clean_keywords, logger)
                 else:
                     # Universal fallback for any source
                     articles, method_used = self.search_universal_fallback(clean_keywords, source, logger)
@@ -157,6 +187,70 @@ class RobustAcademicSearcher:
             logger.info(f"Failed methods: {', '.join(self.failed_methods)}")
         
         return pd.DataFrame(columns=['id', 'title', 'authors', 'abstract', 'source', 'url', 'year'])
+    
+    def search_single_source(self, keywords: List[str], source: str, logger=None) -> List[Dict]:
+        """
+        Search a single source and return articles for live progress tracking.
+        """
+        articles = []
+        method_used = "none"
+        
+        if not keywords:
+            if logger:
+                logger.error("❌ No keywords provided")
+            return []
+        
+        # Clean and prepare keywords
+        clean_keywords = [kw.strip() for kw in keywords if kw.strip()]
+        
+        try:
+            if source == "Google Scholar":
+                # Try multiple approaches for Google Scholar
+                articles_gs, method_gs = self.search_google_scholar_robust(clean_keywords, logger)
+                articles = articles_gs
+                method_used = method_gs
+                
+                # If we didn't get many results, try with different keyword combinations
+                if len(articles) < self.max_results_per_source // 2:
+                    keyword_combinations = self.create_keyword_combinations(clean_keywords)
+                    for combo in keyword_combinations[:2]:  # Try 2 more combinations
+                        additional_articles, _ = self.search_google_scholar_robust(combo, logger)
+                        articles.extend(additional_articles)
+                        if len(articles) >= self.max_results_per_source:
+                            break
+                    method_used = f"{method_gs}_extended"
+                    
+            elif source == "Google Scholar (Scholarly)":
+                articles, method_used = self.search_scholarly_api(clean_keywords, logger)
+            elif source == "PubMed/MEDLINE":
+                articles, method_used = self.search_pubmed_robust(clean_keywords, logger)
+            elif source == "DuckDuckGo Academic":
+                articles, method_used = self.search_duckduckgo_robust(clean_keywords, logger)
+            elif source == "arXiv":
+                articles, method_used = self.search_arxiv_robust(clean_keywords, logger)
+            elif source == "ResearchGate":
+                articles, method_used = self.search_researchgate_robust(clean_keywords, logger)
+            else:
+                # Universal fallback for any source
+                articles, method_used = self.search_universal_fallback(clean_keywords, source, logger)
+            
+            # Add metadata to articles
+            for article in articles:
+                article['source'] = source
+                article['search_method'] = method_used
+                article['keywords_used'] = ', '.join(clean_keywords)
+            
+            if articles:
+                self.successful_methods.append(f"{source}:{method_used}")
+            else:
+                self.failed_methods.append(f"{source}:{method_used}")
+                
+        except Exception as e:
+            self.failed_methods.append(f"{source}:error")
+            if logger:
+                logger.error(f"❌ {source} failed: {str(e)}")
+        
+        return articles
     
     def search_google_scholar_robust(self, keywords: List[str], logger=None) -> tuple[List[Dict], str]:
         """
@@ -219,6 +313,241 @@ class RobustAcademicSearcher:
         
         return [], "failed"
     
+    def search_scholarly_api(self, keywords: List[str], logger=None) -> tuple[List[Dict], str]:
+        """
+        Search using the scholarly package for Google Scholar.
+        This provides more reliable and structured access to Google Scholar.
+        """
+        if not SCHOLARLY_AVAILABLE:
+            if logger:
+                logger.warning("⚠️ Scholarly package not available")
+            return [], "scholarly_unavailable"
+        
+        articles = []
+        
+        try:
+            if logger:
+                logger.info("🔄 Trying scholarly API search...")
+            
+            # Construct search query - use first few keywords to avoid overly complex queries
+            query = " ".join(keywords[:3])
+            
+            if logger:
+                logger.info(f"📚 Searching scholarly for: {query}")
+            
+            # Search using scholarly
+            search_query = scholarly.search_pubs(query)
+            
+            count = 0
+            for pub in search_query:
+                if count >= min(self.max_results_per_source, 50):  # Limit to prevent timeout, but allow more results
+                    break
+                
+                try:
+                    # Fill in publication details
+                    pub_filled = scholarly.fill(pub)
+                    
+                    # Extract article information
+                    article = {
+                        'title': pub_filled.get('title', '').strip(),
+                        'authors': self.format_scholarly_authors(pub_filled.get('author', [])),
+                        'abstract': pub_filled.get('abstract', '').strip(),
+                        'url': pub_filled.get('pub_url', ''),
+                        'year': self.extract_year_from_scholarly(pub_filled),
+                        'doi': self.extract_doi_from_scholarly(pub_filled),
+                        'journal': pub_filled.get('journal', ''),
+                        'citations': pub_filled.get('num_citations', 0),
+                        'venue': pub_filled.get('venue', '')
+                    }
+                    
+                    # Validate article
+                    if self.is_valid_scholarly_article(article):
+                        articles.append(article)
+                        count += 1
+                        
+                        if logger and count % 5 == 0:
+                            logger.info(f"📄 Found {count} articles via scholarly...")
+                    
+                    # Add delay to be respectful
+                    time.sleep(random.uniform(1, 2))
+                    
+                except Exception as e:
+                    if logger:
+                        logger.warning(f"⚠️ Error processing scholarly result: {str(e)}")
+                    continue
+            
+            if articles:
+                if logger:
+                    logger.success(f"✅ Scholarly API found {len(articles)} articles")
+                return articles, "scholarly_api"
+            else:
+                if logger:
+                    logger.warning("⚠️ Scholarly API returned no valid articles")
+                return [], "scholarly_no_results"
+                
+        except Exception as e:
+            if logger:
+                logger.error(f"❌ Scholarly API search failed: {str(e)}")
+            return [], "scholarly_error"
+    
+    def format_scholarly_authors(self, author_list: List) -> str:
+        """Format author list from scholarly into a readable string."""
+        if not author_list:
+            return "Unknown"
+        
+        try:
+            authors = []
+            for author in author_list[:5]:  # Limit to first 5 authors
+                if isinstance(author, dict):
+                    name = author.get('name', '')
+                elif isinstance(author, str):
+                    name = author
+                else:
+                    name = str(author)
+                
+                if name and name.strip():
+                    authors.append(name.strip())
+            
+            if authors:
+                if len(author_list) > 5:
+                    return ", ".join(authors) + " et al."
+                else:
+                    return ", ".join(authors)
+            else:
+                return "Unknown"
+                
+        except Exception:
+            return "Unknown"
+    
+    def extract_year_from_scholarly(self, pub: Dict) -> Optional[int]:
+        """Extract year from scholarly publication data."""
+        try:
+            # Try different year fields
+            year_fields = ['year', 'pub_year', 'bib']
+            
+            for field in year_fields:
+                if field in pub and pub[field]:
+                    if field == 'bib' and isinstance(pub[field], dict):
+                        # Look in bibliography data
+                        bib_year = pub[field].get('pub_year')
+                        if bib_year:
+                            return int(bib_year)
+                    else:
+                        # Direct year field
+                        year_val = pub[field]
+                        if isinstance(year_val, (int, str)):
+                            year = int(str(year_val)[:4])  # Take first 4 digits
+                            if 1900 <= year <= 2030:
+                                return year
+            
+            # Fallback: extract from title or venue
+            title_text = pub.get('title', '') + ' ' + pub.get('venue', '')
+            return self.extract_year(title_text)
+            
+        except (ValueError, TypeError):
+            return None
+    
+    def extract_doi_from_scholarly(self, pub: Dict) -> Optional[str]:
+        """Extract DOI from scholarly publication data."""
+        try:
+            # Check direct DOI field
+            if 'doi' in pub and pub['doi']:
+                return pub['doi']
+            
+            # Check in bibliography data
+            if 'bib' in pub and isinstance(pub['bib'], dict):
+                bib_doi = pub['bib'].get('doi')
+                if bib_doi:
+                    return bib_doi
+            
+            # Check URL for DOI pattern
+            url = pub.get('pub_url', '')
+            if url and 'doi.org' in url:
+                doi_match = re.search(r'doi\.org/(.+)', url)
+                if doi_match:
+                    return doi_match.group(1)
+            
+            # Extract from abstract or title
+            text = pub.get('abstract', '') + ' ' + pub.get('title', '')
+            return self.extract_doi(text)
+            
+        except Exception:
+            return None
+    
+    def is_valid_scholarly_article(self, article: Dict) -> bool:
+        """Check if a scholarly article is valid."""
+        if not article.get('title') or len(article['title']) < 10:
+            return False
+        
+        # Check for reasonable title length
+        title_len = len(article['title'])
+        if title_len < 10 or title_len > 300:
+            return False
+        
+        # Should have some basic information
+        has_info = bool(article.get('authors') and article['authors'] != "Unknown")
+        
+        return has_info
+    
+    def create_keyword_combinations(self, keywords: List[str]) -> List[List[str]]:
+        """Create different keyword combinations for broader search coverage."""
+        if not keywords:
+            return []
+        
+        combinations = []
+        
+        # Original full list
+        combinations.append(keywords[:])
+        
+        # Top 5 keywords
+        if len(keywords) > 5:
+            combinations.append(keywords[:5])
+        
+        # Top 3 keywords
+        if len(keywords) > 3:
+            combinations.append(keywords[:3])
+        
+        # Split into chunks of 4-6 keywords
+        chunk_size = 5
+        for i in range(0, len(keywords), chunk_size):
+            chunk = keywords[i:i + chunk_size]
+            if len(chunk) >= 2:  # Only add chunks with at least 2 keywords
+                combinations.append(chunk)
+        
+        return combinations[:4]  # Limit to 4 combinations to avoid too many requests
+    
+    def search_arxiv_robust(self, keywords: List[str], logger=None) -> tuple[List[Dict], str]:
+        """Search arXiv preprint server."""
+        try:
+            if logger:
+                logger.info("🔄 Trying arXiv search...")
+            
+            articles = self.search_via_duckduckgo("arxiv.org", keywords, logger)
+            if articles:
+                return articles, "arxiv_search"
+                
+        except Exception as e:
+            if logger:
+                logger.warning(f"⚠️ arXiv search failed: {str(e)}")
+        
+        return [], "failed"
+    
+    def search_researchgate_robust(self, keywords: List[str], logger=None) -> tuple[List[Dict], str]:
+        """Search ResearchGate academic network."""
+        try:
+            if logger:
+                logger.info("🔄 Trying ResearchGate search...")
+            
+            articles = self.search_via_duckduckgo("researchgate.net", keywords, logger)
+            if articles:
+                return articles, "researchgate_search"
+                
+        except Exception as e:
+            if logger:
+                logger.warning(f"⚠️ ResearchGate search failed: {str(e)}")
+        
+        return [], "failed"
+    
     def search_pubmed_robust(self, keywords: List[str], logger=None) -> tuple[List[Dict], str]:
         """
         Multiple strategies to search PubMed.
@@ -253,26 +582,56 @@ class RobustAcademicSearcher:
     
     def search_duckduckgo_robust(self, keywords: List[str], logger=None) -> tuple[List[Dict], str]:
         """
-        Enhanced DuckDuckGo search with academic focus.
+        Enhanced DuckDuckGo search with academic focus and multiple strategies.
         """
+        articles = []
+        
+        # Strategy 1: Academic sites search
         try:
             if logger:
-                logger.info("🔄 Trying enhanced DuckDuckGo search...")
+                logger.info("🔄 Trying enhanced DuckDuckGo academic search...")
             
             articles = self.search_via_duckduckgo("", keywords, logger, academic_sites=True)
             if articles:
-                return articles, "enhanced_duckduckgo"
+                if logger:
+                    logger.info(f"📚 Found {len(articles)} articles from academic sites")
                 
         except Exception as e:
             if logger:
                 logger.warning(f"⚠️ Enhanced DuckDuckGo failed: {str(e)}")
         
-        return [], "failed"
+        # Strategy 2: If we need more results, try broader search
+        if len(articles) < self.max_results_per_source // 2:
+            try:
+                if logger:
+                    logger.info("🔄 Trying broader DuckDuckGo search for more results...")
+                
+                # Add research-specific terms
+                research_keywords = keywords[:3] + ["research", "study", "paper"]
+                additional_articles = self.search_via_duckduckgo("", research_keywords, logger, academic_sites=False)
+                
+                # Filter to keep only academic-looking results
+                filtered_additional = [art for art in additional_articles if self.is_valid_article(art)]
+                articles.extend(filtered_additional)
+                
+                if logger and filtered_additional:
+                    logger.info(f"📄 Added {len(filtered_additional)} more articles from broader search")
+                    
+            except Exception as e:
+                if logger:
+                    logger.warning(f"⚠️ Broader DuckDuckGo search failed: {str(e)}")
+        
+        if articles:
+            return articles[:self.max_results_per_source], "enhanced_duckduckgo"
+        else:
+            return [], "failed"
     
     def search_universal_fallback(self, keywords: List[str], source: str, logger=None) -> tuple[List[Dict], str]:
         """
-        Universal fallback that works for any source.
+        Universal fallback that works for any source with multiple strategies.
         """
+        articles = []
+        
         try:
             if logger:
                 logger.info(f"🔄 Trying universal fallback for {source}...")
@@ -280,18 +639,48 @@ class RobustAcademicSearcher:
             # Map source to likely domains
             domain_mapping = {
                 "Scopus": "scopus.com",
-                "Web of Science": "webofknowledge.com",
+                "Web of Science": ["webofknowledge.com", "webofscience.com"],
                 "EMBASE": "embase.com",
                 "PsycINFO": "psycnet.apa.org",
                 "arXiv": "arxiv.org",
                 "ResearchGate": "researchgate.net"
             }
             
-            domain = domain_mapping.get(source, "")
-            articles = self.search_via_duckduckgo(domain, keywords, logger, academic_sites=True)
+            domains = domain_mapping.get(source, "")
+            if isinstance(domains, str):
+                domains = [domains] if domains else []
             
-            if articles:
-                return articles, "universal_fallback"
+            # Strategy 1: Try specific domain search
+            for domain in domains:
+                try:
+                    domain_articles = self.search_via_duckduckgo(domain, keywords, logger, academic_sites=True)
+                    articles.extend(domain_articles)
+                    if len(articles) >= self.max_results_per_source // 2:
+                        break
+                except Exception:
+                    continue
+            
+            # Strategy 2: If no domain or few results, try general academic search with source name
+            if len(articles) < self.max_results_per_source // 2:
+                try:
+                    # Add source name to search terms
+                    enhanced_keywords = keywords[:3] + [source.split()[0].lower()]  # Add first word of source
+                    general_articles = self.search_via_duckduckgo("", enhanced_keywords, logger, academic_sites=True)
+                    articles.extend(general_articles)
+                except Exception:
+                    pass
+            
+            # Remove duplicates
+            seen_titles = set()
+            unique_articles = []
+            for article in articles:
+                title_key = article.get('title', '').lower().strip()
+                if title_key and title_key not in seen_titles:
+                    seen_titles.add(title_key)
+                    unique_articles.append(article)
+            
+            if unique_articles:
+                return unique_articles[:self.max_results_per_source], "universal_fallback_enhanced"
                 
         except Exception as e:
             if logger:
