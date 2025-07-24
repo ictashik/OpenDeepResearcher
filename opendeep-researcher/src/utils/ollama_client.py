@@ -2,7 +2,7 @@ import requests
 import json
 import re
 from typing import Dict, List, Optional
-from utils.data_manager import load_config
+from src.utils.data_manager import load_config
 
 try:
     from openai import OpenAI

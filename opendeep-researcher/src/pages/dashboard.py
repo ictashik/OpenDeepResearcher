@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from utils.data_manager import load_projects, create_project, ensure_data_structure
+from src.utils.data_manager import load_projects, create_project, ensure_data_structure
 
 def show(logger):
     """Dashboard page for project management."""
@@ -108,24 +108,19 @@ def show(logger):
             with col2:
                 st.write(step['status'])
         
-        # Quick actions
+        # Quick actions - removed navigation buttons to avoid conflicts
         st.markdown("#### Quick Actions")
         
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            if st.button("Start Scoping", use_container_width=True):
-                st.session_state.page = "Scoping"
-                st.rerun()
+            st.info("💡 Use the sidebar navigation to start scoping your project")
         
         with col2:
-            if st.button("Configure Settings", use_container_width=True):
-                st.session_state.page = "Settings"
-                st.rerun()
+            st.info("⚙️ Configure AI models and settings in the sidebar")
         
         with col3:
-            if st.button("View Progress", use_container_width=True):
-                st.info("Detailed progress tracking coming soon!")
+            st.info("📊 Track progress through the workflow using sidebar navigation")
     else:
         st.info("Select or create a project to get started!")
 

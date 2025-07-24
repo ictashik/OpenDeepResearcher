@@ -3,3 +3,7 @@ pandas
 PyMuPDF
 requests
 openai
+beautifulsoup4
+lxml
+ddgs
+numpy<2.0

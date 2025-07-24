@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
-from utils.data_manager import load_extracted_data, save_final_report, load_final_report, get_project_dir
-from utils.ollama_client import OllamaClient
-from utils.data_manager import load_config
+from src.utils.data_manager import load_extracted_data, save_final_report, load_final_report, get_project_dir
+from src.utils.ollama_client import OllamaClient
+from src.utils.data_manager import load_config
+from src.utils.streamlit_utils import safe_dataframe, safe_download_button
 from datetime import datetime
 
 def show(logger):
@@ -69,7 +70,7 @@ def show(logger):
                 })
         
         completeness_df = pd.DataFrame(completeness_data)
-        st.dataframe(completeness_df, use_container_width=True)
+        safe_dataframe(completeness_df, use_container_width=True)
         
         # Show extracted data table
         st.markdown("**Extracted Data Preview:**")
@@ -78,7 +79,7 @@ def show(logger):
         display_columns = ['title'] + [col for col in extracted_data.columns if col not in ['article_id', 'title', 'extraction_date']]
         display_data = extracted_data[display_columns].head(10)
         
-        st.dataframe(display_data, use_container_width=True)
+        safe_dataframe(display_data, use_container_width=True)
         
         if len(extracted_data) > 10:
             st.info(f"Showing first 10 rows of {len(extracted_data)} total articles")
@@ -275,7 +276,7 @@ def show(logger):
                 st.markdown("**Download Options:**")
                 
                 # Download as Markdown
-                st.download_button(
+                safe_download_button(
                     label=" Download as Markdown (.md)",
                     data=final_report,
                     file_name=f"systematic_review_{project_id}_{datetime.now().strftime('%Y%m%d')}.md",
@@ -286,7 +287,7 @@ def show(logger):
                 # Download extracted data as CSV
                 if not extracted_data.empty:
                     csv_data = extracted_data.to_csv(index=False)
-                    st.download_button(
+                    safe_download_button(
                         label=" Download Extracted Data (.csv)",
                         data=csv_data,
                         file_name=f"extracted_data_{project_id}_{datetime.now().strftime('%Y%m%d')}.csv",

@@ -1,6 +1,6 @@
 import streamlit as st
-from utils.data_manager import load_config, save_config
-from utils.ollama_client import OllamaClient
+from src.utils.data_manager import load_config, save_config
+from src.utils.ollama_client import OllamaClient
 
 def show(logger):
     """Settings page for configuration."""

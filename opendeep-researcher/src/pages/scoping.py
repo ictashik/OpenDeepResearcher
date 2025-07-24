@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
-from utils.ollama_client import OllamaClient
-from utils.data_manager import load_config, get_project_dir, load_projects, save_projects
+from src.utils.ollama_client import OllamaClient
+from src.utils.data_manager import load_config, get_project_dir, load_projects, save_projects
 
 def show(logger):
     """Scoping & Planning page."""

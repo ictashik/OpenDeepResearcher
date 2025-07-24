@@ -1,18 +1,19 @@
 import streamlit as st
 import pandas as pd
-from utils.data_manager import load_raw_articles, save_screened_articles, save_raw_articles, get_project_dir
-from utils.ollama_client import OllamaClient
-from utils.data_manager import load_config
+from src.utils.data_manager import load_raw_articles, save_screened_articles, save_raw_articles, get_project_dir
+from src.utils.ollama_client import OllamaClient
+from src.utils.data_manager import load_config
+from src.utils.streamlit_utils import safe_bar_chart, safe_download_button
 
 def show(logger):
     """Article screening page."""
-    st.title(" Article Screening")
+    st.title("🔍 Article Screening")
     st.markdown("---")
 
     # Check if project is selected
     project_id = st.session_state.get("current_project_id")
     if not project_id:
-        st.warning(" Please select a project from the Dashboard first.")
+        st.warning("⚠️ Please select a project from the Dashboard first.")
         return
 
     logger.info(f"Loading screening page for project: {project_id}")
@@ -21,11 +22,23 @@ def show(logger):
     articles_df = load_raw_articles(project_id)
     
     if articles_df.empty:
-        st.warning(" No articles found for screening. Please complete the data collection phase first.")
-        st.info(" **Next steps:** Go to the Scoping page to configure your search and collect articles.")
+        st.warning("📭 No articles found for screening.")
+        st.info("**Next steps:**")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("• Complete the **Scoping** phase to define search parameters")
+        
+        with col2:
+            st.markdown("• Use **Data Collection** to search and gather articles")
+        
+        if st.button("🔍 Go to Data Collection", use_container_width=True):
+            st.session_state.page = "Data Collection"
+            st.rerun()
+        
         return
 
-    st.success(f"Found {len(articles_df)} articles ready for screening")
+    st.success(f"📚 Found {len(articles_df)} articles ready for screening")
 
     # Initialize Ollama client
     config = load_config()
@@ -295,7 +308,7 @@ def show(logger):
                 'Count': [included, excluded, uncertain]
             })
             
-            st.bar_chart(chart_data.set_index('Decision'))
+            safe_bar_chart(chart_data.set_index('Decision'))
             
             # Show included articles
             if included > 0:
@@ -343,7 +356,7 @@ def show(logger):
                 if st.button(" Export Results", use_container_width=True):
                     # Create downloadable CSV
                     csv = screened_articles.to_csv(index=False)
-                    st.download_button(
+                    safe_download_button(
                         label="⬇️ Download Screening Results",
                         data=csv,
                         file_name=f"screening_results_{project_id}.csv",
@@ -354,6 +367,6 @@ def show(logger):
 def display_screening_page():
     """Legacy function - use show() instead."""
     if 'logger' not in st.session_state:
-        from components.logger import Logger
+        from src.components.logger import Logger
         st.session_state.logger = Logger()
     show(st.session_state.logger)

@@ -1,10 +1,10 @@
 import streamlit as st
 import pandas as pd
 from pathlib import Path
-from utils.pdf_processor import PDFProcessor
-from utils.data_manager import load_screened_articles, save_extracted_data, get_project_dir
-from utils.ollama_client import OllamaClient
-from utils.data_manager import load_config
+from src.utils.pdf_processor import PDFProcessor
+from src.utils.data_manager import load_screened_articles, save_extracted_data, get_project_dir
+from src.utils.ollama_client import OllamaClient
+from src.utils.data_manager import load_config
 
 def show(logger):
     """Full-text analysis page."""
