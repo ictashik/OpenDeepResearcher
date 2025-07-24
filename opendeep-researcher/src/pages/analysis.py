@@ -8,13 +8,12 @@ from utils.data_manager import load_config
 
 def show(logger):
     """Full-text analysis page."""
-    st.title("🔍 Full-Text Analysis")
-    st.markdown("---")
+    st.subheader("Full-Text Analysis")
 
     # Check if project is selected
     project_id = st.session_state.get("current_project_id")
     if not project_id:
-        st.warning("⚠️ Please select a project from the Dashboard first.")
+        st.warning("Please select a project from the Dashboard first.")
         return
 
     logger.info(f"Loading full-text analysis for project: {project_id}")
@@ -23,7 +22,7 @@ def show(logger):
     articles_df = load_screened_articles(project_id)
     
     if articles_df.empty:
-        st.warning("📝 No screened articles found. Please complete the screening phase first.")
+        st.warning("No screened articles found. Please complete the screening phase first.")
         return
 
     # Filter for included articles only
@@ -33,7 +32,7 @@ def show(logger):
         included_articles = articles_df
     
     if included_articles.empty:
-        st.warning("📝 No articles were included during screening. Please review your screening results.")
+        st.warning("No articles were included during screening. Please review your screening results.")
         return
 
     st.success(f"Found {len(included_articles)} articles ready for full-text analysis")
@@ -44,14 +43,14 @@ def show(logger):
     config = load_config()
 
     # Create tabs for different analysis phases
-    tab1, tab2, tab3 = st.tabs(["📄 Document Management", "🧠 AI Extraction", "📊 Results Review"])
+    tab1, tab2, tab3 = st.tabs(["Document Management", "AI Extraction", "Results Review"])
 
     with tab1:
         st.subheader("Document Management")
         
         # Show articles and their full-text status
         for idx, (_, article) in enumerate(included_articles.iterrows()):
-            with st.expander(f"📄 {article['title'][:100]}...", expanded=False):
+            with st.expander(f" {article['title'][:100]}...", expanded=False):
                 col1, col2 = st.columns([2, 1])
                 
                 with col1:
@@ -108,7 +107,7 @@ def show(logger):
         # Check if extraction model is configured
         extraction_model = config.get("extraction_model", "")
         if not extraction_model:
-            st.error("❌ No extraction model configured. Please configure models in Settings.")
+            st.error(" No extraction model configured. Please configure models in Settings.")
             return
         
         st.info(f"Using model: **{extraction_model}**")
@@ -117,7 +116,7 @@ def show(logger):
         extraction_prompts = config.get("extraction_prompts", {})
         
         if not extraction_prompts:
-            st.warning("⚠️ No extraction prompts configured. Please configure extraction prompts in Settings.")
+            st.warning(" No extraction prompts configured. Please configure extraction prompts in Settings.")
             return
         
         # Show what will be extracted
@@ -129,12 +128,12 @@ def show(logger):
         full_text_articles = included_articles[included_articles['full_text_status'] == 'Acquired']
         
         if full_text_articles.empty:
-            st.warning("📄 No articles with full text available. Please upload PDFs in the Document Management tab.")
+            st.warning(" No articles with full text available. Please upload PDFs in the Document Management tab.")
         else:
             st.success(f"Ready to extract data from {len(full_text_articles)} articles")
             
             # Bulk extraction button
-            if st.button("🚀 Start Bulk Extraction", use_container_width=True):
+            if st.button(" Start Bulk Extraction", use_container_width=True):
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 
@@ -176,7 +175,7 @@ def show(logger):
                     # Update progress
                     progress_bar.progress((idx + 1) / len(full_text_articles))
                 
-                status_text.text("✅ Extraction complete!")
+                status_text.text(" Extraction complete!")
                 st.success("Data extraction completed!")
                 st.rerun()
             
@@ -188,7 +187,7 @@ def show(logger):
                 col1, col2 = st.columns([3, 1])
                 
                 with col1:
-                    st.write(f"📄 {article['title'][:80]}...")
+                    st.write(f" {article['title'][:80]}...")
                 
                 with col2:
                     if st.button(f"Extract", key=f"extract_{idx}"):
@@ -213,13 +212,13 @@ def show(logger):
                                         
                                         save_extracted_data(project_id, article.get('id', idx), ai_extracted)
                                         
-                                        st.success("✅ Data extracted!")
+                                        st.success(" Data extracted!")
                                         logger.success(f"Extracted data from: {article['title'][:50]}...")
                                     else:
-                                        st.error("❌ Failed to process PDF")
+                                        st.error(" Failed to process PDF")
                                         
                             except Exception as e:
-                                st.error(f"❌ Error: {str(e)}")
+                                st.error(f" Error: {str(e)}")
                                 logger.error(f"Error processing {article['title'][:50]}...: {str(e)}")
 
     with tab3:
@@ -230,9 +229,9 @@ def show(logger):
         extracted_df = load_extracted_data(project_id)
         
         if extracted_df.empty:
-            st.info("📊 No extracted data available yet. Please run the extraction process first.")
+            st.info(" No extracted data available yet. Please run the extraction process first.")
         else:
-            st.success(f"📊 Found extracted data for {len(extracted_df)} articles")
+            st.success(f" Found extracted data for {len(extracted_df)} articles")
             
             # Summary statistics
             col1, col2, col3 = st.columns(3)
@@ -266,7 +265,7 @@ def show(logger):
             col1, col2 = st.columns([1, 1])
             
             with col1:
-                if st.button("💾 Save Changes", use_container_width=True):
+                if st.button(" Save Changes", use_container_width=True):
                     # Save the edited data back
                     data_file = get_project_dir(project_id) / "data_extracted.csv"
                     edited_df.to_csv(data_file, index=False)
@@ -275,7 +274,7 @@ def show(logger):
                     st.success("Changes saved successfully!")
             
             with col2:
-                if st.button("📊 Generate Summary", use_container_width=True):
+                if st.button(" Generate Summary", use_container_width=True):
                     # Create a summary of the extracted data
                     summary = "## Extraction Summary\n\n"
                     summary += f"**Total Articles Processed:** {len(extracted_df)}\n\n"

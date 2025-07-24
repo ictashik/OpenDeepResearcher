@@ -19,17 +19,35 @@ class Logger:
         self.log(message, "INFO")
         
     def warning(self, message):
-        self.log(message, "⚠️ WARNING")
+        self.log(message, "WARNING")
         
     def error(self, message):
-        self.log(message, "❌ ERROR")
+        self.log(message, "ERROR")
         
     def success(self, message):
-        self.log(message, "✅ SUCCESS")
+        self.log(message, "SUCCESS")
 
-    def display(self):
+    def display(self, height=200):
+        """Display log messages in a terminal-like format with fixed height."""
         if st.session_state.log_messages:
-            for message in reversed(st.session_state.log_messages[-20:]):  # Show last 20 messages
-                st.text(message)
+            # Join all messages into a single string for better formatting
+            log_text = "\n".join(reversed(st.session_state.log_messages[-50:]))  # Show last 50 messages
+            st.text_area(
+                "",
+                value=log_text,
+                height=height,
+                disabled=True,
+                key="log_display",
+                label_visibility="collapsed",
+                help="Terminal output - showing last 50 log entries"
+            )
         else:
-            st.text("No log messages yet.")
+            st.text_area(
+                "",
+                value="Terminal ready...",
+                height=height,
+                disabled=True,
+                key="log_display_empty",
+                label_visibility="collapsed",
+                help="Terminal output - no messages yet"
+            )

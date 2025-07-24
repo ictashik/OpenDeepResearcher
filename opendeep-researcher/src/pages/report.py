@@ -7,13 +7,13 @@ from datetime import datetime
 
 def show(logger):
     """Report generation page."""
-    st.title("📄 Report Generation")
+    st.title(" Report Generation")
     st.markdown("---")
 
     # Check if project is selected
     project_id = st.session_state.get("current_project_id")
     if not project_id:
-        st.warning("⚠️ Please select a project from the Dashboard first.")
+        st.warning(" Please select a project from the Dashboard first.")
         return
 
     logger.info(f"Loading report generation for project: {project_id}")
@@ -22,8 +22,8 @@ def show(logger):
     extracted_data = load_extracted_data(project_id)
     
     if extracted_data.empty:
-        st.warning("📊 No extracted data available for report generation.")
-        st.info("💡 **Next steps:** Complete the Full-Text Analysis phase to extract data from your articles.")
+        st.warning(" No extracted data available for report generation.")
+        st.info(" **Next steps:** Complete the Full-Text Analysis phase to extract data from your articles.")
         return
 
     st.success(f"Found extracted data from {len(extracted_data)} articles")
@@ -33,7 +33,7 @@ def show(logger):
     ollama_client = OllamaClient()
 
     # Create tabs for different report aspects
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 Data Summary", "📝 Report Generation", "✏️ Manual Editing", "💾 Export"])
+    tab1, tab2, tab3, tab4 = st.tabs([" Data Summary", " Report Generation", " Manual Editing", " Export"])
 
     with tab1:
         st.subheader("Extracted Data Summary")
@@ -89,7 +89,7 @@ def show(logger):
         # Check if extraction model is configured
         extraction_model = config.get("extraction_model", "")
         if not extraction_model:
-            st.error("❌ No extraction model configured. Please configure models in Settings.")
+            st.error(" No extraction model configured. Please configure models in Settings.")
             return
         
         st.info(f"Using model: **{extraction_model}**")
@@ -123,7 +123,7 @@ def show(logger):
         )
         
         # Generate report button
-        if st.button("🤖 Generate AI Report", use_container_width=True):
+        if st.button(" Generate AI Report", use_container_width=True):
             with st.spinner("Generating comprehensive report... This may take a few minutes."):
                 try:
                     # Prepare data for report generation
@@ -145,15 +145,15 @@ def show(logger):
                     if generated_report and "Failed to generate report" not in generated_report:
                         st.session_state.generated_report = generated_report
                         logger.success("AI report generated successfully")
-                        st.success("✅ Report generated successfully!")
+                        st.success(" Report generated successfully!")
                         st.rerun()
                     else:
                         logger.error("Failed to generate AI report")
-                        st.error("❌ Failed to generate report. Please try again.")
+                        st.error(" Failed to generate report. Please try again.")
                         
                 except Exception as e:
                     logger.error(f"Error generating report: {str(e)}")
-                    st.error(f"❌ Error generating report: {str(e)}")
+                    st.error(f" Error generating report: {str(e)}")
         
         # Display generated report
         if 'generated_report' in st.session_state:
@@ -168,13 +168,13 @@ def show(logger):
             col1, col2 = st.columns([1, 1])
             
             with col1:
-                if st.button("💾 Save Generated Report"):
+                if st.button(" Save Generated Report"):
                     save_final_report(project_id, report_content)
                     logger.success("Generated report saved")
                     st.success("Report saved successfully!")
             
             with col2:
-                if st.button("✏️ Edit Report"):
+                if st.button(" Edit Report"):
                     st.session_state.manual_report = report_content
                     logger.info("Report moved to manual editing")
                     st.info("Report moved to Manual Editing tab for further customization")
@@ -229,7 +229,7 @@ def show(logger):
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            if st.button("💾 Save Draft", use_container_width=True):
+            if st.button(" Save Draft", use_container_width=True):
                 # Add metadata to report
                 full_report = f"""# {report_title}
 
@@ -253,7 +253,7 @@ def show(logger):
                 st.markdown(manual_report)
         
         with col3:
-            if st.button("🔄 Reset", use_container_width=True):
+            if st.button(" Reset", use_container_width=True):
                 st.session_state.manual_report = existing_report or ""
                 st.rerun()
 
@@ -264,9 +264,9 @@ def show(logger):
         final_report = load_final_report(project_id)
         
         if not final_report:
-            st.warning("📄 No report available for export. Please generate or create a report first.")
+            st.warning(" No report available for export. Please generate or create a report first.")
         else:
-            st.success("📄 Report ready for export")
+            st.success(" Report ready for export")
             
             # Export options
             col1, col2 = st.columns(2)
@@ -276,7 +276,7 @@ def show(logger):
                 
                 # Download as Markdown
                 st.download_button(
-                    label="📁 Download as Markdown (.md)",
+                    label=" Download as Markdown (.md)",
                     data=final_report,
                     file_name=f"systematic_review_{project_id}_{datetime.now().strftime('%Y%m%d')}.md",
                     mime="text/markdown",
@@ -287,7 +287,7 @@ def show(logger):
                 if not extracted_data.empty:
                     csv_data = extracted_data.to_csv(index=False)
                     st.download_button(
-                        label="📊 Download Extracted Data (.csv)",
+                        label=" Download Extracted Data (.csv)",
                         data=csv_data,
                         file_name=f"extracted_data_{project_id}_{datetime.now().strftime('%Y%m%d')}.csv",
                         mime="text/csv",

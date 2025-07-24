@@ -21,6 +21,10 @@ def main():
     
     logger = st.session_state.logger
     
+    # App title at the top
+    st.title("OpenDeepResearcher")
+    st.markdown("---")
+    
     # Render sidebar for navigation
     selected_page = render_sidebar()
     
@@ -44,9 +48,14 @@ def main():
     elif page == "Report":
         report.show(logger)
 
-    # Log panel for real-time feedback
-    with st.expander("📋 Log Panel", expanded=False):
-        logger.display()
+    # Fixed log panel at bottom - like VS Code terminal
+    st.markdown("---")
+    
+    # Create a fixed-height log panel container
+    log_container = st.container()
+    with log_container:
+        st.markdown("### 📟 Terminal")
+        logger.display(height=200)  # Fixed height like VS Code terminal
 
 if __name__ == "__main__":
     main()

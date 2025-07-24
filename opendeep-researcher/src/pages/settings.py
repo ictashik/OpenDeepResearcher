@@ -4,14 +4,13 @@ from utils.ollama_client import OllamaClient
 
 def show(logger):
     """Settings page for configuration."""
-    st.title("⚙️ Settings")
-    st.markdown("---")
+    st.subheader("Settings")
     
     # Load current configuration
     config = load_config()
     
     # Ollama Configuration Section
-    st.subheader("🤖 Ollama Configuration")
+    st.markdown("#### Ollama Configuration")
     
     col1, col2 = st.columns([2, 1])
     
@@ -35,13 +34,13 @@ def show(logger):
         # Show current status
         models_list = config.get("models_list", [])
         if models_list:
-            st.success(f"✅ Connected ({len(models_list)} models)")
+            st.success(f"Connected ({len(models_list)} models)")
             st.info("Models ready for use")
         else:
-            st.warning("⚠️ Not connected")
+            st.warning("Not connected")
         
         # Test connection button
-        if st.button("🔍 Test Connection"):
+        if st.button("Test Connection"):
             with st.spinner("Testing connection..."):
                 # Update config temporarily for testing
                 temp_config = config.copy()
@@ -52,7 +51,7 @@ def show(logger):
                 client = OllamaClient()
                 
                 if client.test_connection():
-                    st.success("✅ Connection successful!")
+                    st.success("Connection successful!")
                     logger.success("Ollama connection test successful")
                     
                     # Fetch available models
@@ -73,12 +72,12 @@ def show(logger):
                             st.warning("No models found")
                             logger.warning("No models found on Ollama server")
                 else:
-                    st.error("❌ Connection failed")
+                    st.error("Connection failed")
                     logger.error("Failed to connect to Ollama server")
     
     # Model Selection Section
     st.markdown("---")
-    st.subheader("🧠 Model Selection")
+    st.markdown("#### Model Selection")
     
     models_list = config.get("models_list", [])
     
@@ -115,7 +114,7 @@ def show(logger):
     
     # Data Extraction Prompts Section
     st.markdown("---")
-    st.subheader("📝 Custom Extraction Prompts")
+    st.markdown("#### Custom Extraction Prompts")
     
     st.markdown("Define custom prompts for extracting specific information from research papers:")
     
@@ -159,7 +158,7 @@ def show(logger):
     
     # Search Configuration Section  
     st.markdown("---")
-    st.subheader("🔍 Search Configuration")
+    st.markdown("#### Search Configuration")
     
     search_sources = st.multiselect(
         "Default Search Sources",
@@ -186,7 +185,7 @@ def show(logger):
     col1, col2, col3 = st.columns([1, 1, 1])
     
     with col1:
-        if st.button("💾 Save Settings", use_container_width=True):
+        if st.button("Save Settings", use_container_width=True):
             # Update config with current form values
             config["ollama_endpoint"] = ollama_endpoint
             config["api_key"] = api_key
@@ -196,7 +195,7 @@ def show(logger):
             st.success("Settings saved successfully!")
     
     with col2:
-        if st.button("🔄 Reset to Defaults", use_container_width=True):
+        if st.button("Reset to Defaults", use_container_width=True):
             default_config = {
                 "ollama_endpoint": "http://localhost:11434",
                 "api_key": "",
@@ -213,7 +212,7 @@ def show(logger):
             st.rerun()
     
     with col3:
-        if st.button("🧪 Test Models", use_container_width=True):
+        if st.button("Test Models", use_container_width=True):
             if not config.get("screening_model") or not config.get("extraction_model"):
                 st.error("Please select both models first")
             else:

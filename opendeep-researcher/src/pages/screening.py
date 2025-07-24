@@ -6,13 +6,13 @@ from utils.data_manager import load_config
 
 def show(logger):
     """Article screening page."""
-    st.title("🔍 Article Screening")
+    st.title(" Article Screening")
     st.markdown("---")
 
     # Check if project is selected
     project_id = st.session_state.get("current_project_id")
     if not project_id:
-        st.warning("⚠️ Please select a project from the Dashboard first.")
+        st.warning(" Please select a project from the Dashboard first.")
         return
 
     logger.info(f"Loading screening page for project: {project_id}")
@@ -21,8 +21,8 @@ def show(logger):
     articles_df = load_raw_articles(project_id)
     
     if articles_df.empty:
-        st.warning("📝 No articles found for screening. Please complete the data collection phase first.")
-        st.info("💡 **Next steps:** Go to the Scoping page to configure your search and collect articles.")
+        st.warning(" No articles found for screening. Please complete the data collection phase first.")
+        st.info(" **Next steps:** Go to the Scoping page to configure your search and collect articles.")
         return
 
     st.success(f"Found {len(articles_df)} articles ready for screening")
@@ -43,7 +43,7 @@ def show(logger):
             inclusion_criteria = search_config.get("inclusion_criteria", "")
 
     # Create tabs for different screening phases
-    tab1, tab2, tab3 = st.tabs(["🤖 AI Screening", "👤 Manual Review", "📊 Results"])
+    tab1, tab2, tab3 = st.tabs([" AI Screening", "👤 Manual Review", " Results"])
 
     with tab1:
         st.subheader("AI-Powered Initial Screening")
@@ -51,17 +51,17 @@ def show(logger):
         # Check if screening model is configured
         screening_model = config.get("screening_model", "")
         if not screening_model:
-            st.error("❌ No screening model configured. Please configure models in Settings.")
+            st.error(" No screening model configured. Please configure models in Settings.")
             return
         
         st.info(f"Using model: **{screening_model}**")
         
         # Display inclusion criteria
         if inclusion_criteria:
-            with st.expander("📋 Inclusion Criteria"):
+            with st.expander(" Inclusion Criteria"):
                 st.write(inclusion_criteria)
         else:
-            st.warning("⚠️ No inclusion criteria found. Please complete the Scoping phase first.")
+            st.warning(" No inclusion criteria found. Please complete the Scoping phase first.")
         
         # Check if AI screening has been done
         if 'ai_recommendation' not in articles_df.columns:
@@ -84,7 +84,7 @@ def show(logger):
         
         # Bulk AI screening
         if screened_count < len(articles_df):
-            if st.button("🚀 Run AI Screening for All Articles", use_container_width=True):
+            if st.button(" Run AI Screening for All Articles", use_container_width=True):
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 
@@ -111,7 +111,7 @@ def show(logger):
                     
                     progress_bar.progress((idx + 1) / len(articles_df))
                 
-                status_text.text("✅ AI screening complete!")
+                status_text.text(" AI screening complete!")
                 
                 # Save results
                 save_raw_articles(project_id, articles_df)
@@ -131,7 +131,7 @@ def show(logger):
                     col1, col2 = st.columns([3, 1])
                     
                     with col1:
-                        st.write(f"📄 {article['title'][:80]}...")
+                        st.write(f" {article['title'][:80]}...")
                     
                     with col2:
                         if st.button(f"Screen", key=f"screen_{idx}"):
@@ -149,11 +149,11 @@ def show(logger):
                                     
                                     save_raw_articles(project_id, articles_df)
                                     
-                                    st.success(f"✅ {result.get('recommendation')}")
+                                    st.success(f" {result.get('recommendation')}")
                                     logger.success(f"Screened: {article['title'][:50]}... -> {result.get('recommendation')}")
                                     
                                 except Exception as e:
-                                    st.error(f"❌ Error: {str(e)}")
+                                    st.error(f" Error: {str(e)}")
                                     logger.error(f"Error screening {article['title'][:50]}...: {str(e)}")
 
     with tab2:
@@ -163,7 +163,7 @@ def show(logger):
         screened_articles = articles_df[articles_df['ai_recommendation'] != ""].copy()
         
         if screened_articles.empty:
-            st.warning("📝 No AI-screened articles available. Please run AI screening first.")
+            st.warning(" No AI-screened articles available. Please run AI screening first.")
         else:
             # Add final decision column if it doesn't exist
             if 'final_decision' not in screened_articles.columns:
@@ -219,7 +219,7 @@ def show(logger):
             col1, col2 = st.columns([1, 1])
             
             with col1:
-                if st.button("💾 Save Manual Review", use_container_width=True):
+                if st.button(" Save Manual Review", use_container_width=True):
                     # Update the original dataframe with manual decisions
                     for idx, row in edited_df.iterrows():
                         mask = (articles_df['title'] == row['title']) & (articles_df['authors'] == row['authors'])
@@ -233,7 +233,7 @@ def show(logger):
                     st.success("Manual review decisions saved successfully!")
             
             with col2:
-                if st.button("📊 Generate Screening Report", use_container_width=True):
+                if st.button(" Generate Screening Report", use_container_width=True):
                     # Generate screening statistics
                     final_include = (edited_df['final_decision'] == 'Include').sum()
                     final_exclude = (edited_df['final_decision'] == 'Exclude').sum()
@@ -264,7 +264,7 @@ def show(logger):
         screened_articles = articles_df[articles_df.get('final_decision', '') != ""].copy()
         
         if screened_articles.empty:
-            st.info("📊 No final screening decisions available yet.")
+            st.info(" No final screening decisions available yet.")
         else:
             # Summary statistics
             total_screened = len(screened_articles)
@@ -304,7 +304,7 @@ def show(logger):
                 included_articles = screened_articles[screened_articles['final_decision'] == 'Include']
                 
                 for _, article in included_articles.iterrows():
-                    with st.expander(f"📄 {article['title']}"):
+                    with st.expander(f" {article['title']}"):
                         col1, col2 = st.columns([2, 1])
                         
                         with col1:
@@ -326,7 +326,7 @@ def show(logger):
             col1, col2 = st.columns(2)
             
             with col1:
-                if st.button("📁 Proceed to Full-Text Analysis", use_container_width=True):
+                if st.button(" Proceed to Full-Text Analysis", use_container_width=True):
                     if included > 0:
                         # Add full-text status column
                         articles_df['full_text_status'] = 'Awaiting'
@@ -340,7 +340,7 @@ def show(logger):
                         st.error("No articles included for full-text analysis")
             
             with col2:
-                if st.button("📄 Export Results", use_container_width=True):
+                if st.button(" Export Results", use_container_width=True):
                     # Create downloadable CSV
                     csv = screened_articles.to_csv(index=False)
                     st.download_button(
