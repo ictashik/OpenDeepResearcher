@@ -33,7 +33,7 @@ OpenDeepResearcher is an AI-Powered Systematic Review & Research Application des
 
 1. Clone the repository:
    ```
-   git clone https://github.com/ictashik/opendeep-researcher.git
+   git clone https://github.com/ictashik/OpenDeepResearcher.git
    cd opendeep-researcher
    ```
 
