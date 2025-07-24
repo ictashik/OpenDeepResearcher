@@ -1,6 +1,7 @@
 """
-Enhanced academic search utility with multiple fallback strategies.
+Enhanced academic search utility with multiple fallback strategies and API integrations.
 Specifically designed to work with Google Scholar and other academic databases.
+Now includes support for PubMed E-utilities, CORE API, and Semantic Scholar API.
 """
 
 import requests
@@ -14,6 +15,10 @@ import json
 import random
 import logging
 from pathlib import Path
+import xml.etree.ElementTree as ET
+
+# Import config manager
+from .config_manager import config_manager
 
 # Import scholarly package
 try:
@@ -32,6 +37,10 @@ class RobustAcademicSearcher:
         self.max_results_per_source = max_results_per_source
         self.delay_range = delay_range
         self.session = requests.Session()
+        
+        # Load API keys from configuration
+        self.core_api_key = config_manager.get_core_api_key()
+        self.semantic_scholar_api_key = config_manager.get_semantic_scholar_api_key()
         
         # Rotate through different user agents to avoid detection
         self.user_agents = [
@@ -215,6 +224,12 @@ class RobustAcademicSearcher:
                 articles, method_used = self.search_scholarly_api(clean_keywords, logger)
             elif source == "PubMed/MEDLINE":
                 articles, method_used = self.search_pubmed_robust(clean_keywords, logger)
+            elif source == "PubMed API":
+                articles, method_used = self.search_pubmed_api(clean_keywords, logger)
+            elif source == "Semantic Scholar":
+                articles, method_used = self.search_semantic_scholar_api(clean_keywords, logger)
+            elif source == "CORE API":
+                articles, method_used = self.search_core_api(clean_keywords, logger)
             elif source == "DuckDuckGo Academic":
                 articles, method_used = self.search_duckduckgo_robust(clean_keywords, logger)
             elif source == "arXiv":
@@ -260,6 +275,12 @@ class RobustAcademicSearcher:
                 articles, method_used = self.search_scholarly_api(search_terms, logger)
             elif source == "PubMed/MEDLINE":
                 articles, method_used = self.search_pubmed_robust(search_terms, logger)
+            elif source == "PubMed API":
+                articles, method_used = self.search_pubmed_api(search_terms, logger)
+            elif source == "Semantic Scholar":
+                articles, method_used = self.search_semantic_scholar_api(search_terms, logger)
+            elif source == "CORE API":
+                articles, method_used = self.search_core_api(search_terms, logger)
             elif source == "DuckDuckGo Academic":
                 articles, method_used = self.search_duckduckgo_robust(search_terms, logger)
             elif source == "arXiv":
@@ -821,6 +842,441 @@ class RobustAcademicSearcher:
             return articles[:self.max_results_per_source], "enhanced_duckduckgo"
         else:
             return [], "failed"
+    
+    def search_pubmed_api(self, keywords: List[str], logger=None) -> tuple[List[Dict], str]:
+        """
+        Search PubMed using the official NCBI E-utilities API.
+        Two-step process: ESearch for IDs, then EFetch for details.
+        """
+        articles = []
+        
+        try:
+            if logger:
+                logger.info("🔄 Trying PubMed E-utilities API...")
+            
+            # Step 1: ESearch - Get PMIDs
+            query = " AND ".join([f'"{kw}"' for kw in keywords[:5]])  # Limit to 5 keywords
+            search_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+            search_params = {
+                'db': 'pubmed',
+                'term': query,
+                'retmax': min(self.max_results_per_source, 100),  # PubMed limits
+                'retmode': 'json'
+            }
+            
+            if logger:
+                logger.info(f"📚 Searching PubMed for: {query}")
+            
+            search_response = self.session.get(search_url, params=search_params, timeout=15)
+            search_response.raise_for_status()
+            search_data = search_response.json()
+            
+            pmids = search_data.get('esearchresult', {}).get('idlist', [])
+            
+            if not pmids:
+                if logger:
+                    logger.warning("⚠️ No PMIDs found in PubMed search")
+                return [], "no_pmids"
+            
+            if logger:
+                logger.info(f"📄 Found {len(pmids)} PMIDs, fetching details...")
+            
+            # Step 2: EFetch - Get article details
+            fetch_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+            fetch_params = {
+                'db': 'pubmed',
+                'id': ','.join(pmids),
+                'retmode': 'xml',
+                'rettype': 'abstract'
+            }
+            
+            fetch_response = self.session.get(fetch_url, params=fetch_params, timeout=30)
+            fetch_response.raise_for_status()
+            
+            articles = self.parse_pubmed_xml(fetch_response.text, logger)
+            
+            if articles:
+                if logger:
+                    logger.success(f"✅ PubMed API found {len(articles)} articles")
+                return articles, "pubmed_api"
+            else:
+                return [], "no_articles_parsed"
+                
+        except Exception as e:
+            if logger:
+                logger.error(f"❌ PubMed API search failed: {str(e)}")
+            return [], "api_error"
+    
+    def parse_pubmed_xml(self, xml_content: str, logger=None) -> List[Dict]:
+        """Parse PubMed XML response to extract article information."""
+        articles = []
+        
+        try:
+            root = ET.fromstring(xml_content)
+            
+            for article_elem in root.findall('.//PubmedArticle'):
+                try:
+                    article = self.extract_pubmed_article(article_elem)
+                    if article and self.is_valid_article(article):
+                        articles.append(article)
+                        
+                except Exception as e:
+                    if logger:
+                        logger.warning(f"⚠️ Error parsing PubMed article: {str(e)}")
+                    continue
+            
+        except ET.ParseError as e:
+            if logger:
+                logger.error(f"❌ Error parsing PubMed XML: {str(e)}")
+        
+        return articles
+    
+    def extract_pubmed_article(self, article_elem) -> Optional[Dict]:
+        """Extract article information from PubMed XML element."""
+        try:
+            # PMID
+            pmid_elem = article_elem.find('.//PMID')
+            pmid = pmid_elem.text if pmid_elem is not None else ""
+            
+            # Title
+            title_elem = article_elem.find('.//ArticleTitle')
+            title = title_elem.text if title_elem is not None else ""
+            
+            # Authors
+            authors = self.extract_pubmed_authors(article_elem)
+            
+            # Abstract
+            abstract_elem = article_elem.find('.//AbstractText')
+            abstract = abstract_elem.text if abstract_elem is not None else ""
+            
+            # Year
+            year = self.extract_pubmed_year(article_elem)
+            
+            # Journal
+            journal_elem = article_elem.find('.//Title')
+            journal = journal_elem.text if journal_elem is not None else ""
+            
+            # DOI
+            doi = self.extract_pubmed_doi(article_elem)
+            
+            # Construct URL
+            url = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" if pmid else ""
+            
+            return {
+                'title': title.strip() if title else "",
+                'authors': authors,
+                'abstract': abstract.strip() if abstract else "",
+                'url': url,
+                'year': year,
+                'doi': doi,
+                'journal': journal.strip() if journal else "",
+                'pmid': pmid
+            }
+            
+        except Exception:
+            return None
+    
+    def extract_pubmed_authors(self, article_elem) -> str:
+        """Extract authors from PubMed XML."""
+        try:
+            author_elems = article_elem.findall('.//Author')
+            authors = []
+            
+            for author_elem in author_elems[:10]:  # Limit to 10 authors
+                last_name = ""
+                first_name = ""
+                
+                last_name_elem = author_elem.find('LastName')
+                if last_name_elem is not None:
+                    last_name = last_name_elem.text
+                
+                first_name_elem = author_elem.find('ForeName')
+                if first_name_elem is not None:
+                    first_name = first_name_elem.text
+                
+                if last_name:
+                    if first_name:
+                        authors.append(f"{first_name} {last_name}")
+                    else:
+                        authors.append(last_name)
+            
+            if authors:
+                return ", ".join(authors)
+            else:
+                return "Unknown"
+                
+        except Exception:
+            return "Unknown"
+    
+    def extract_pubmed_year(self, article_elem) -> Optional[int]:
+        """Extract publication year from PubMed XML."""
+        try:
+            # Try different year fields
+            year_paths = [
+                './/PubDate/Year',
+                './/PubDate/MedlineDate',
+                './/ArticleDate/Year'
+            ]
+            
+            for path in year_paths:
+                year_elem = article_elem.find(path)
+                if year_elem is not None:
+                    year_text = year_elem.text
+                    if year_text:
+                        # Extract first 4 digits
+                        year_match = re.search(r'(\d{4})', year_text)
+                        if year_match:
+                            return int(year_match.group(1))
+            
+            return None
+            
+        except (ValueError, AttributeError):
+            return None
+    
+    def extract_pubmed_doi(self, article_elem) -> Optional[str]:
+        """Extract DOI from PubMed XML."""
+        try:
+            # Look for DOI in ArticleIdList
+            article_ids = article_elem.findall('.//ArticleId')
+            for id_elem in article_ids:
+                if id_elem.get('IdType') == 'doi':
+                    return id_elem.text
+            
+            return None
+            
+        except Exception:
+            return None
+    
+    def search_semantic_scholar_api(self, keywords: List[str], logger=None) -> tuple[List[Dict], str]:
+        """
+        Search using Semantic Scholar Academic Graph API.
+        """
+        articles = []
+        
+        try:
+            if logger:
+                logger.info("🔄 Trying Semantic Scholar API...")
+            
+            # Construct query
+            query = " ".join(keywords[:5])  # Limit to avoid overly complex queries
+            
+            url = "https://api.semanticscholar.org/graph/v1/paper/search"
+            params = {
+                'query': query,
+                'limit': min(self.max_results_per_source, 100),
+                'fields': 'title,url,abstract,authors,year,venue,citationCount,referenceCount,doi'
+            }
+            
+            headers = {
+                'User-Agent': random.choice(self.user_agents)
+            }
+            
+            # Add API key if available
+            if self.semantic_scholar_api_key:
+                headers['x-api-key'] = self.semantic_scholar_api_key
+            
+            if logger:
+                logger.info(f"📚 Searching Semantic Scholar for: {query}")
+            
+            response = self.session.get(url, params=params, headers=headers, timeout=15)
+            response.raise_for_status()
+            
+            data = response.json()
+            papers = data.get('data', [])
+            
+            if not papers:
+                if logger:
+                    logger.warning("⚠️ No papers found in Semantic Scholar")
+                return [], "no_papers"
+            
+            for paper in papers:
+                try:
+                    article = self.extract_semantic_scholar_article(paper)
+                    if article and self.is_valid_article(article):
+                        articles.append(article)
+                        
+                except Exception as e:
+                    if logger:
+                        logger.warning(f"⚠️ Error processing Semantic Scholar paper: {str(e)}")
+                    continue
+            
+            if articles:
+                if logger:
+                    logger.success(f"✅ Semantic Scholar API found {len(articles)} articles")
+                return articles, "semantic_scholar_api"
+            else:
+                return [], "no_valid_articles"
+                
+        except Exception as e:
+            if logger:
+                logger.error(f"❌ Semantic Scholar API search failed: {str(e)}")
+            return [], "api_error"
+    
+    def extract_semantic_scholar_article(self, paper: Dict) -> Optional[Dict]:
+        """Extract article information from Semantic Scholar paper data."""
+        try:
+            # Authors
+            authors = self.format_semantic_scholar_authors(paper.get('authors', []))
+            
+            # URL - use Semantic Scholar URL if no direct URL
+            url = paper.get('url', '')
+            if not url and paper.get('paperId'):
+                url = f"https://www.semanticscholar.org/paper/{paper['paperId']}"
+            
+            return {
+                'title': paper.get('title', '').strip(),
+                'authors': authors,
+                'abstract': paper.get('abstract', '').strip(),
+                'url': url,
+                'year': paper.get('year'),
+                'doi': paper.get('doi'),
+                'venue': paper.get('venue', ''),
+                'citations': paper.get('citationCount', 0),
+                'references': paper.get('referenceCount', 0)
+            }
+            
+        except Exception:
+            return None
+    
+    def format_semantic_scholar_authors(self, authors_list: List[Dict]) -> str:
+        """Format author list from Semantic Scholar into a readable string."""
+        if not authors_list:
+            return "Unknown"
+        
+        try:
+            authors = []
+            for author in authors_list[:5]:  # Limit to first 5 authors
+                name = author.get('name', '').strip()
+                if name:
+                    authors.append(name)
+            
+            if authors:
+                if len(authors_list) > 5:
+                    return ", ".join(authors) + " et al."
+                else:
+                    return ", ".join(authors)
+            else:
+                return "Unknown"
+                
+        except Exception:
+            return "Unknown"
+    
+    def search_core_api(self, keywords: List[str], logger=None) -> tuple[List[Dict], str]:
+        """
+        Search using CORE API for open access research papers.
+        Note: Requires API key for full functionality.
+        """
+        articles = []
+        
+        try:
+            if logger:
+                logger.info("🔄 Trying CORE API...")
+            
+            if not self.core_api_key:
+                if logger:
+                    logger.warning("⚠️ CORE API key not configured, skipping...")
+                return [], "no_api_key"
+            
+            # Construct query
+            query_parts = []
+            for keyword in keywords[:5]:
+                query_parts.append(f'title:"{keyword}"')
+            
+            query = " AND ".join(query_parts)
+            
+            url = "https://api.core.ac.uk/v3/search/works"
+            params = {
+                'q': query,
+                'limit': min(self.max_results_per_source, 100),
+                'apiKey': self.core_api_key
+            }
+            
+            if logger:
+                logger.info(f"📚 Searching CORE for: {query}")
+            
+            response = self.session.get(url, params=params, timeout=15)
+            response.raise_for_status()
+            
+            data = response.json()
+            works = data.get('results', [])
+            
+            if not works:
+                if logger:
+                    logger.warning("⚠️ No works found in CORE")
+                return [], "no_works"
+            
+            for work in works:
+                try:
+                    article = self.extract_core_article(work)
+                    if article and self.is_valid_article(article):
+                        articles.append(article)
+                        
+                except Exception as e:
+                    if logger:
+                        logger.warning(f"⚠️ Error processing CORE work: {str(e)}")
+                    continue
+            
+            if articles:
+                if logger:
+                    logger.success(f"✅ CORE API found {len(articles)} articles")
+                return articles, "core_api"
+            else:
+                return [], "no_valid_articles"
+                
+        except Exception as e:
+            if logger:
+                logger.error(f"❌ CORE API search failed: {str(e)}")
+            return [], "api_error"
+    
+    def extract_core_article(self, work: Dict) -> Optional[Dict]:
+        """Extract article information from CORE work data."""
+        try:
+            # Authors
+            authors = self.format_core_authors(work.get('authors', []))
+            
+            return {
+                'title': work.get('title', '').strip(),
+                'authors': authors,
+                'abstract': work.get('abstract', '').strip(),
+                'url': work.get('downloadUrl', '') or work.get('doi', ''),
+                'year': work.get('yearPublished'),
+                'doi': work.get('doi'),
+                'journal': work.get('journals', [{}])[0].get('title', '') if work.get('journals') else '',
+                'full_text_url': work.get('fullTextIdentifier', '')
+            }
+            
+        except Exception:
+            return None
+    
+    def format_core_authors(self, authors_list: List[Dict]) -> str:
+        """Format author list from CORE into a readable string."""
+        if not authors_list:
+            return "Unknown"
+        
+        try:
+            authors = []
+            for author in authors_list[:5]:  # Limit to first 5 authors
+                name = author.get('name', '').strip()
+                if name:
+                    authors.append(name)
+            
+            if authors:
+                if len(authors_list) > 5:
+                    return ", ".join(authors) + " et al."
+                else:
+                    return ", ".join(authors)
+            else:
+                return "Unknown"
+                
+        except Exception:
+            return "Unknown"
+    
+    def set_api_keys(self, core_api_key: str = None, semantic_scholar_api_key: str = None):
+        """Set API keys for enhanced functionality."""
+        if core_api_key:
+            self.core_api_key = core_api_key
+        if semantic_scholar_api_key:
+            self.semantic_scholar_api_key = semantic_scholar_api_key
     
     def search_universal_fallback(self, keywords: List[str], source: str, logger=None) -> tuple[List[Dict], str]:
         """

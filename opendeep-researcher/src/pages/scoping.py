@@ -349,66 +349,116 @@ def show(logger):
         
         # Available sources
         available_sources = {
+            "PubMed API": {
+                "description": "Official PubMed E-utilities API",
+                "best_for": "Reliable medical literature access with structured data",
+                "coverage": "1946-present",
+                "api_required": False,
+                "reliability": "High"
+            },
+            "Semantic Scholar": {
+                "description": "AI-powered academic search engine",
+                "best_for": "Cross-disciplinary research with citation networks",
+                "coverage": "All disciplines",
+                "api_required": False,
+                "reliability": "High"
+            },
+            "CORE API": {
+                "description": "Open access research papers API",
+                "best_for": "Open access papers with full-text availability",
+                "coverage": "200M+ open access papers",
+                "api_required": True,
+                "reliability": "High"
+            },
             "PubMed/MEDLINE": {
-                "description": "Biomedical literature database",
+                "description": "Biomedical literature database (web scraping)",
                 "best_for": "Medical and health sciences research",
-                "coverage": "1946-present"
+                "coverage": "1946-present",
+                "api_required": False,
+                "reliability": "Medium"
             },
             "Google Scholar": {
-                "description": "Broad academic search engine",
+                "description": "Broad academic search engine (web scraping)",
                 "best_for": "Multidisciplinary research, grey literature",
-                "coverage": "Varies"
+                "coverage": "Varies",
+                "api_required": False,
+                "reliability": "Medium"
             },
             "Google Scholar (Scholarly)": {
                 "description": "Advanced Google Scholar API access",
                 "best_for": "Reliable Scholar access with detailed metadata",
-                "coverage": "Varies"
+                "coverage": "Varies",
+                "api_required": False,
+                "reliability": "High"
             },
             "Scopus": {
                 "description": "Abstract and citation database",
                 "best_for": "Science, technology, medicine, social sciences",
-                "coverage": "1970-present"
+                "coverage": "1970-present",
+                "api_required": True,
+                "reliability": "High"
             },
             "Web of Science": {
                 "description": "Citation database",
                 "best_for": "Cross-disciplinary research",
-                "coverage": "1900-present"
+                "coverage": "1900-present",
+                "api_required": True,
+                "reliability": "High"
             },
             "EMBASE": {
                 "description": "Biomedical database",
                 "best_for": "Pharmacology, clinical medicine",
-                "coverage": "1947-present"
+                "coverage": "1947-present",
+                "api_required": True,
+                "reliability": "High"
             },
             "PsycINFO": {
                 "description": "Psychology database",
                 "best_for": "Psychology and behavioral sciences",
-                "coverage": "1800s-present"
+                "coverage": "1800s-present",
+                "api_required": True,
+                "reliability": "High"
             },
             "DuckDuckGo Academic": {
                 "description": "Academic-focused web search",
                 "best_for": "Open access papers and grey literature",
-                "coverage": "Web-wide"
+                "coverage": "Web-wide",
+                "api_required": False,
+                "reliability": "Medium"
             },
             "arXiv": {
                 "description": "Preprint repository for physics, mathematics, CS",
                 "best_for": "Latest research in STEM fields",
-                "coverage": "1991-present"
+                "coverage": "1991-present",
+                "api_required": False,
+                "reliability": "High"
             },
             "ResearchGate": {
                 "description": "Academic social network and repository",
                 "best_for": "Connecting research and finding papers",
-                "coverage": "Varies"
+                "coverage": "Varies",
+                "api_required": False,
+                "reliability": "Medium"
             }
         }
         
         # Load saved selections or use defaults
         default_sources = saved_search_config.get("selected_sources", 
-                                                 config.get("search_sources", ["PubMed/MEDLINE", "Google Scholar"]))
+                                                 config.get("search_sources", ["PubMed API", "Semantic Scholar", "Google Scholar (Scholarly)"]))
         
         st.markdown("**Select databases to search:**")
+        st.info("💡 **Recommended:** API-based sources (PubMed API, Semantic Scholar, CORE API) provide more reliable and structured data.")
+        
+        # Group sources by type for better organization
+        api_sources = {k: v for k, v in available_sources.items() if not v.get("api_required", False) and k in ["PubMed API", "Semantic Scholar", "Google Scholar (Scholarly)"]}
+        premium_api_sources = {k: v for k, v in available_sources.items() if v.get("api_required", False)}
+        web_sources = {k: v for k, v in available_sources.items() if k not in api_sources and k not in premium_api_sources}
         
         selected_sources = []
-        for source, details in available_sources.items():
+        
+        # Display API sources first (recommended)
+        st.markdown("**🔥 Recommended API Sources:**")
+        for source, details in api_sources.items():
             col1, col2 = st.columns([1, 3])
             
             with col1:
@@ -425,6 +475,53 @@ def show(logger):
                     st.markdown(f"**Description:** {details['description']}")
                     st.markdown(f"**Best for:** {details['best_for']}")
                     st.markdown(f"**Coverage:** {details['coverage']}")
+                    st.markdown(f"**Reliability:** {details['reliability']}")
+                    if not details.get("api_required", False):
+                        st.success("✅ No API key required")
+        
+        # Display premium API sources
+        st.markdown("**🔑 Premium API Sources (Require API Keys):**")
+        for source, details in premium_api_sources.items():
+            col1, col2 = st.columns([1, 3])
+            
+            with col1:
+                selected = st.checkbox(
+                    source,
+                    value=source in default_sources,
+                    key=f"source_{source}"
+                )
+                if selected:
+                    selected_sources.append(source)
+            
+            with col2:
+                with st.expander(f"About {source}"):
+                    st.markdown(f"**Description:** {details['description']}")
+                    st.markdown(f"**Best for:** {details['best_for']}")
+                    st.markdown(f"**Coverage:** {details['coverage']}")
+                    st.markdown(f"**Reliability:** {details['reliability']}")
+                    st.warning("⚠️ Requires API key or subscription")
+        
+        # Display web scraping sources
+        st.markdown("**🌐 Web Scraping Sources:**")
+        for source, details in web_sources.items():
+            col1, col2 = st.columns([1, 3])
+            
+            with col1:
+                selected = st.checkbox(
+                    source,
+                    value=source in default_sources,
+                    key=f"source_{source}"
+                )
+                if selected:
+                    selected_sources.append(source)
+            
+            with col2:
+                with st.expander(f"About {source}"):
+                    st.markdown(f"**Description:** {details['description']}")
+                    st.markdown(f"**Best for:** {details['best_for']}")
+                    st.markdown(f"**Coverage:** {details['coverage']}")
+                    st.markdown(f"**Reliability:** {details['reliability']}")
+                    st.info("ℹ️ Web scraping - may be less reliable")
         
         # Search parameters
         st.markdown("---")

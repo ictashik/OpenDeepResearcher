@@ -175,9 +175,17 @@ def show(logger):
             
             search_sources = st.multiselect(
                 "Select sources to search:",
-                options=search_config.get("selected_sources", []) + ["Google Scholar (Scholarly)", "DuckDuckGo Academic", "arXiv", "ResearchGate"],
+                options=search_config.get("selected_sources", []) + [
+                    "Google Scholar (Scholarly)", 
+                    "DuckDuckGo Academic", 
+                    "arXiv", 
+                    "ResearchGate",
+                    "PubMed API",
+                    "Semantic Scholar",
+                    "CORE API"
+                ],
                 default=default_sources,
-                help="Choose which databases to search. More sources = more comprehensive results."
+                help="Choose which databases to search. API sources provide more structured data and are generally more reliable."
             )
             
             max_results_override = st.number_input(
@@ -193,11 +201,13 @@ def show(logger):
             st.markdown("**📋 Recommended Source Combinations:**")
             
             recommendations = {
-                "Medical/Health Research": ["PubMed/MEDLINE", "Google Scholar (Scholarly)", "EMBASE"],
-                "Multidisciplinary": ["Google Scholar", "Google Scholar (Scholarly)", "DuckDuckGo Academic", "arXiv"],
-                "Technology/Computer Science": ["Google Scholar (Scholarly)", "arXiv", "DuckDuckGo Academic"],
-                "Psychology/Social Sciences": ["PsycINFO", "Google Scholar (Scholarly)", "DuckDuckGo Academic"],
-                "Maximum Coverage": ["Google Scholar", "Google Scholar (Scholarly)", "PubMed/MEDLINE", "DuckDuckGo Academic", "arXiv", "ResearchGate"]
+                "Medical/Health Research": ["PubMed API", "PubMed/MEDLINE", "Google Scholar (Scholarly)", "Semantic Scholar"],
+                "Multidisciplinary": ["Semantic Scholar", "Google Scholar (Scholarly)", "CORE API", "DuckDuckGo Academic", "arXiv"],
+                "Technology/Computer Science": ["Semantic Scholar", "Google Scholar (Scholarly)", "arXiv", "DuckDuckGo Academic"],
+                "Psychology/Social Sciences": ["Semantic Scholar", "PsycINFO", "Google Scholar (Scholarly)", "DuckDuckGo Academic"],
+                "Open Access Focus": ["CORE API", "Semantic Scholar", "arXiv", "ResearchGate"],
+                "API Enhanced": ["PubMed API", "Semantic Scholar", "CORE API", "Google Scholar (Scholarly)"],
+                "Maximum Coverage": ["PubMed API", "Semantic Scholar", "CORE API", "Google Scholar", "Google Scholar (Scholarly)", "DuckDuckGo Academic", "arXiv", "ResearchGate"]
             }
             
             selected_combo = st.selectbox(

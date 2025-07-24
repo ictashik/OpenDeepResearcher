@@ -1,3 +1,35 @@
 # config.yaml
 
-# This file is intentionally left blank.
+# OpenDeep Researcher Configuration
+
+# API Keys for enhanced data collection
+# Note: These are optional but provide better access to academic databases
+api_keys:
+  # CORE API - Free tier available at: https://core.ac.uk/api-keys/register
+  core_api_key: ""
+  
+  # Semantic Scholar API - Get higher rate limits at: https://www.semanticscholar.org/product/api
+  semantic_scholar_api_key: ""
+
+# Data Collection Settings
+data_collection:
+  max_results_per_source: 100
+  delay_between_requests: 1.5
+  
+# Search Configuration
+search:
+  default_sources:
+    - "Semantic Scholar"
+    - "Google Scholar (Scholarly)"
+    - "DuckDuckGo Academic"
+  
+  # Recommended combinations for different research areas
+  medical_sources:
+    - "PubMed API"
+    - "Semantic Scholar"
+    - "Google Scholar (Scholarly)"
+  
+  computer_science_sources:
+    - "Semantic Scholar"
+    - "arXiv"
+    - "Google Scholar (Scholarly)"

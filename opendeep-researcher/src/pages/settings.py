@@ -1,13 +1,134 @@
 import streamlit as st
 from src.utils.data_manager import load_config, save_config
 from src.utils.ollama_client import OllamaClient
+from src.utils.config_manager import config_manager
 
 def show(logger):
     """Settings page for configuration."""
-    st.subheader("Settings")
+    st.title("⚙️ Settings")
     
-    # Load current configuration
-    config = load_config()
+    # Create tabs for different settings categories
+    tab1, tab2, tab3 = st.tabs(["🔑 API Keys", "🤖 Ollama Configuration", "🔍 Search Settings"])
+    
+    with tab1:
+        st.subheader("API Keys Configuration")
+        st.markdown("Configure API keys for enhanced data collection capabilities.")
+        
+        # API Keys section
+        st.markdown("---")
+        
+        # CORE API
+        st.markdown("**🌐 CORE API** - Open Access Research Papers")
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            current_core_key = config_manager.get_core_api_key() or ""
+            core_api_key = st.text_input(
+                "CORE API Key",
+                value=current_core_key,
+                type="password",
+                help="Get a free API key at: https://core.ac.uk/api-keys/register"
+            )
+            
+            if core_api_key != current_core_key:
+                if st.button("Save CORE API Key", key="save_core"):
+                    config_manager.set_api_key("core_api_key", core_api_key)
+                    st.success("✅ CORE API key saved!")
+                    logger.info("CORE API key updated")
+        
+        with col2:
+            if current_core_key:
+                st.success("✅ Configured")
+            else:
+                st.info("ℹ️ Not configured")
+        
+        # Semantic Scholar API
+        st.markdown("**🧠 Semantic Scholar API** - AI-Powered Academic Search")
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            current_semantic_key = config_manager.get_semantic_scholar_api_key() or ""
+            semantic_api_key = st.text_input(
+                "Semantic Scholar API Key (Optional)",
+                value=current_semantic_key,
+                type="password",
+                help="Optional: Get higher rate limits at: https://www.semanticscholar.org/product/api"
+            )
+            
+            if semantic_api_key != current_semantic_key:
+                if st.button("Save Semantic Scholar API Key", key="save_semantic"):
+                    config_manager.set_api_key("semantic_scholar_api_key", semantic_api_key)
+                    st.success("✅ Semantic Scholar API key saved!")
+                    logger.info("Semantic Scholar API key updated")
+        
+        with col2:
+            if current_semantic_key:
+                st.success("✅ Configured")
+            else:
+                st.info("ℹ️ Optional")
+        
+        # Info about API benefits
+        st.markdown("---")
+        st.markdown("**🎯 API Benefits:**")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**CORE API:**")
+            st.markdown("• Access to 200M+ open access papers")
+            st.markdown("• Full-text content when available")
+            st.markdown("• Structured metadata")
+            st.markdown("• Free tier: 1000 requests/day")
+        
+        with col2:
+            st.markdown("**Semantic Scholar API:**")
+            st.markdown("• AI-powered search relevance")
+            st.markdown("• Citation networks")
+            st.markdown("• Influence metrics")
+            st.markdown("• Higher rate limits with API key")
+        
+        # Test API connections
+        st.markdown("---")
+        st.markdown("**🧪 Test API Connections:**")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("Test CORE API", disabled=not config_manager.get_core_api_key()):
+                with st.spinner("Testing CORE API..."):
+                    # Simple test search
+                    try:
+                        from src.utils.academic_search import RobustAcademicSearcher
+                        searcher = RobustAcademicSearcher()
+                        articles, method = searcher.search_core_api(["machine learning"], logger)
+                        
+                        if articles:
+                            st.success(f"✅ CORE API working! Found {len(articles)} test results")
+                        else:
+                            st.warning("⚠️ CORE API responded but no results found")
+                    except Exception as e:
+                        st.error(f"❌ CORE API test failed: {str(e)}")
+        
+        with col2:
+            if st.button("Test Semantic Scholar API"):
+                with st.spinner("Testing Semantic Scholar API..."):
+                    try:
+                        from src.utils.academic_search import RobustAcademicSearcher
+                        searcher = RobustAcademicSearcher()
+                        articles, method = searcher.search_semantic_scholar_api(["machine learning"], logger)
+                        
+                        if articles:
+                            st.success(f"✅ Semantic Scholar API working! Found {len(articles)} test results")
+                        else:
+                            st.warning("⚠️ Semantic Scholar API responded but no results found")
+                    except Exception as e:
+                        st.error(f"❌ Semantic Scholar API test failed: {str(e)}")
+    
+    with tab2:
+        st.subheader("Ollama Configuration")
+        
+        # Load current configuration for Ollama section
+        config = load_config()
     
     # Migrate old config values to new format
     if "search_sources" in config:
@@ -36,7 +157,7 @@ def show(logger):
             save_config(config)
             logger.info("Updated search source names in configuration")
     
-    # Ollama Configuration Section
+        # Ollama Configuration Section
     st.markdown("#### Ollama Configuration")
     
     col1, col2 = st.columns([2, 1])
@@ -285,6 +406,95 @@ def show(logger):
                     else:
                         st.error("Model test failed")
                         logger.error("Model test failed")
+    
+    with tab3:
+        st.subheader("Search Settings")
+        st.markdown("Configure default search behavior and data collection settings.")
+        
+        # Data collection settings
+        st.markdown("---")
+        st.markdown("**📊 Data Collection Settings:**")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            current_settings = config_manager.get_data_collection_settings()
+            
+            max_results = st.number_input(
+                "Max results per source",
+                min_value=10,
+                max_value=500,
+                value=current_settings.get('max_results_per_source', 100),
+                step=10,
+                help="Maximum number of articles to collect from each data source"
+            )
+            
+            delay_between = st.number_input(
+                "Delay between requests (seconds)",
+                min_value=0.5,
+                max_value=5.0,
+                value=current_settings.get('delay_between_requests', 1.5),
+                step=0.1,
+                help="Delay between API requests to avoid rate limiting"
+            )
+        
+        with col2:
+            st.markdown("**🎯 Default Sources:**")
+            default_sources = config_manager.get_default_sources()
+            
+            available_sources = [
+                "Semantic Scholar",
+                "PubMed API", 
+                "CORE API",
+                "Google Scholar (Scholarly)",
+                "DuckDuckGo Academic",
+                "arXiv",
+                "ResearchGate"
+            ]
+            
+            selected_defaults = st.multiselect(
+                "Default search sources",
+                options=available_sources,
+                default=default_sources,
+                help="These sources will be selected by default for new searches"
+            )
+        
+        # Save search settings
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("Save Search Settings", use_container_width=True):
+                # Update data collection settings
+                current_config = config_manager.load_config()
+                if 'data_collection' not in current_config:
+                    current_config['data_collection'] = {}
+                if 'search' not in current_config:
+                    current_config['search'] = {}
+                
+                current_config['data_collection']['max_results_per_source'] = max_results
+                current_config['data_collection']['delay_between_requests'] = delay_between
+                current_config['search']['default_sources'] = selected_defaults
+                
+                config_manager.save_config(current_config)
+                st.success("✅ Search settings saved!")
+                logger.success("Search settings updated")
+        
+        with col2:
+            if st.button("Reset Search Settings", use_container_width=True):
+                # Reset to defaults
+                current_config = config_manager.load_config()
+                current_config['data_collection'] = {
+                    'max_results_per_source': 100,
+                    'delay_between_requests': 1.5
+                }
+                current_config['search'] = {
+                    'default_sources': ["Semantic Scholar", "Google Scholar (Scholarly)", "DuckDuckGo Academic"]
+                }
+                
+                config_manager.save_config(current_config)
+                st.success("✅ Settings reset to defaults!")
+                logger.info("Search settings reset to defaults")
+                st.rerun()
 
 # Legacy function for backward compatibility
 def settings_page():
