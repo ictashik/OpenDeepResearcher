@@ -161,29 +161,80 @@ def show(logger):
             if 'keywords' in st.session_state:
                 st.markdown("**Generated Keywords:**")
                 
-                # Convert keywords to DataFrame for editing
-                keywords_df = pd.DataFrame({
-                    'keyword': st.session_state.keywords,
-                    'include': [True] * len(st.session_state.keywords),
-                    'category': [''] * len(st.session_state.keywords)
-                })
+                # Initialize keyword states if not exists
+                if 'keyword_states' not in st.session_state:
+                    st.session_state.keyword_states = {
+                        kw: {'include': True, 'category': ''} 
+                        for kw in st.session_state.keywords
+                    }
                 
-                # Allow editing of keywords
-                edited_keywords = st.data_editor(
-                    keywords_df,
-                    use_container_width=True,
-                    num_rows="dynamic",
-                    column_config={
-                        "keyword": st.column_config.TextColumn("Keyword", width="medium"),
-                        "include": st.column_config.CheckboxColumn("Include in Search", width="small"),
-                        "category": st.column_config.SelectboxColumn(
-                            "Category",
-                            options=["Population", "Intervention", "Comparison", "Outcome", "General"],
-                            width="small"
+                # Display keywords with checkboxes and category selection
+                updated_keywords = []
+                
+                for i, keyword in enumerate(st.session_state.keywords):
+                    col1, col2, col3, col4 = st.columns([3, 1, 2, 1])
+                    
+                    with col1:
+                        # Allow editing the keyword text
+                        edited_kw = st.text_input(
+                            f"Keyword {i+1}",
+                            value=keyword,
+                            key=f"kw_text_{i}",
+                            label_visibility="collapsed"
                         )
-                    },
-                    key="keywords_editor"
-                )
+                    
+                    with col2:
+                        # Include checkbox
+                        include = st.checkbox(
+                            "Include",
+                            value=st.session_state.keyword_states.get(keyword, {}).get('include', True),
+                            key=f"kw_include_{i}"
+                        )
+                    
+                    with col3:
+                        # Category selection
+                        category = st.selectbox(
+                            "Category",
+                            options=["", "Population", "Intervention", "Comparison", "Outcome", "General"],
+                            index=0,
+                            key=f"kw_category_{i}",
+                            label_visibility="collapsed"
+                        )
+                    
+                    with col4:
+                        # Delete button
+                        if st.button("🗑️", key=f"kw_delete_{i}", help="Delete keyword"):
+                            continue  # Skip adding this keyword
+                    
+                    # Add to updated list if not deleted
+                    updated_keywords.append({
+                        'keyword': edited_kw,
+                        'include': include,
+                        'category': category
+                    })
+                
+                # Add new keyword section
+                st.markdown("**Add New Keywords:**")
+                col1, col2 = st.columns([3, 1])
+                
+                with col1:
+                    new_keyword = st.text_input("New keyword", key="new_keyword_input")
+                
+                with col2:
+                    if st.button("➕ Add") and new_keyword:
+                        updated_keywords.append({
+                            'keyword': new_keyword,
+                            'include': True,
+                            'category': ''
+                        })
+                        st.rerun()
+                
+                # Update session state
+                st.session_state.keywords = [kw['keyword'] for kw in updated_keywords]
+                st.session_state.keyword_states = {
+                    kw['keyword']: {'include': kw['include'], 'category': kw['category']}
+                    for kw in updated_keywords
+                }
                 
                 # Save keywords
                 col1, col2 = st.columns([1, 1])
@@ -192,7 +243,16 @@ def show(logger):
                     if st.button("💾 Save Keywords"):
                         project_dir = get_project_dir(project_id)
                         keywords_file = project_dir / "keywords.csv"
-                        edited_keywords.to_csv(keywords_file, index=False)
+                        # Create DataFrame from current keyword data
+                        keywords_df = pd.DataFrame([
+                            {
+                                'keyword': kw,
+                                'include': st.session_state.keyword_states.get(kw, {}).get('include', True),
+                                'category': st.session_state.keyword_states.get(kw, {}).get('category', '')
+                            }
+                            for kw in st.session_state.keywords
+                        ])
+                        keywords_df.to_csv(keywords_file, index=False)
                         
                         logger.success("Keywords saved successfully")
                         st.success("Keywords saved successfully!")
@@ -200,7 +260,10 @@ def show(logger):
                 with col2:
                     if st.button("📋 Export Search String"):
                         # Generate search strings for different databases
-                        included_keywords = edited_keywords[edited_keywords['include'] == True]['keyword'].tolist()
+                        included_keywords = [
+                            kw for kw in st.session_state.keywords
+                            if st.session_state.keyword_states.get(kw, {}).get('include', True)
+                        ]
                         
                         # Basic search string (OR combination)
                         search_string = " OR ".join([f'"{kw}"' for kw in included_keywords])

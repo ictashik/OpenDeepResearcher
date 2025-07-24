@@ -2,4 +2,4 @@ streamlit
 pandas
 PyMuPDF
 requests
-```
+openai

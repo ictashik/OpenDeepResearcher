@@ -32,6 +32,14 @@ def show(logger):
     with col2:
         st.markdown("**Connection Status**")
         
+        # Show current status
+        models_list = config.get("models_list", [])
+        if models_list:
+            st.success(f"✅ Connected ({len(models_list)} models)")
+            st.info("Models ready for use")
+        else:
+            st.warning("⚠️ Not connected")
+        
         # Test connection button
         if st.button("🔍 Test Connection"):
             with st.spinner("Testing connection..."):
@@ -52,9 +60,15 @@ def show(logger):
                         models = client.get_models()
                         
                         if models:
+                            # Update and save config with models and connection settings
+                            config["ollama_endpoint"] = ollama_endpoint
+                            config["api_key"] = api_key
                             config["models_list"] = models
+                            save_config(config)
+                            
                             st.success(f"Found {len(models)} models")
                             logger.info(f"Fetched {len(models)} models from Ollama")
+                            st.rerun()  # Refresh to show model selection
                         else:
                             st.warning("No models found")
                             logger.warning("No models found on Ollama server")
@@ -76,7 +90,8 @@ def show(logger):
                 "Screening Model",
                 options=[""] + models_list,
                 index=models_list.index(config.get("screening_model", "")) + 1 if config.get("screening_model") in models_list else 0,
-                help="Model used for article screening and PICO framework generation"
+                help="Model used for article screening and PICO framework generation",
+                key="screening_model_select"
             )
         
         with col2:
@@ -84,12 +99,16 @@ def show(logger):
                 "Data Extraction Model", 
                 options=[""] + models_list,
                 index=models_list.index(config.get("extraction_model", "")) + 1 if config.get("extraction_model") in models_list else 0,
-                help="Model used for data extraction and report generation"
+                help="Model used for data extraction and report generation",
+                key="extraction_model_select"
             )
         
-        # Update config with selected models
-        config["screening_model"] = screening_model
-        config["extraction_model"] = extraction_model
+        # Auto-save model selections when they change
+        if screening_model != config.get("screening_model", "") or extraction_model != config.get("extraction_model", ""):
+            config["screening_model"] = screening_model
+            config["extraction_model"] = extraction_model
+            save_config(config)
+            logger.info(f"Updated model selections: Screening={screening_model}, Extraction={extraction_model}")
         
     else:
         st.info("Please test the connection first to fetch available models.")
