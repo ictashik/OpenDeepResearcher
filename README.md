@@ -51,7 +51,7 @@ OpenDeepResearcher is an AI-Powered Systematic Review & Research Application des
 
 1. **Run the application:**
    ```
-   streamlit run src/app.py
+   python run.py
    ```
 
 2. **Configure API keys (optional but recommended):**
@@ -79,7 +79,7 @@ See `API_CONFIGURATION.md` for detailed setup instructions.
 
 To run the application, execute the following command in your terminal:
 ```
-streamlit run src/app.py
+python run.py
 ```
 
 Once the application is running, you can navigate through the various pages to manage your research projects, input your research questions, screen articles, analyze data, and generate reports.
