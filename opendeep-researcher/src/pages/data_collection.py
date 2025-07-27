@@ -6,7 +6,6 @@ Implements web scraping and article collection functionality.
 import streamlit as st
 import pandas as pd
 import json
-from pathlib import Path
 import time
 from src.utils.data_manager import (
     load_raw_articles, save_raw_articles, get_project_dir, 
@@ -14,6 +13,7 @@ from src.utils.data_manager import (
 )
 from src.utils.academic_search import RobustAcademicSearcher
 from src.utils.web_scraper import PDFDownloader
+from src.utils.ollama_client import OllamaClient
 
 
 def show(logger):
@@ -69,7 +69,7 @@ def show(logger):
         
         keywords_df = pd.read_csv(keywords_file)
         if 'include' in keywords_df.columns:
-            included_keywords = keywords_df[keywords_df['include'] == True]['keyword'].tolist()
+            included_keywords = keywords_df[keywords_df['include']]['keyword'].tolist()
         else:
             included_keywords = keywords_df['keyword'].tolist()
         
@@ -221,48 +221,114 @@ def show(logger):
                 st.rerun()
         
         with col2:
-            st.markdown("**🔍 Search Strategy Preview:**")
+            st.markdown("**🔍 AI-Enhanced Search Strategy:**")
             
-            # Show research question if available
-            projects_df = load_projects()
-            current_project = projects_df[projects_df['project_id'] == project_id].iloc[0]
-            research_question = current_project.get('research_question', '')
+            # Initialize Ollama client
+            config = load_config()
+            ollama_client = OllamaClient()
             
-            if research_question:
-                st.markdown("**1. Research Question Search:**")
-                rq_preview = research_question[:60] + "..." if len(research_question) > 60 else research_question
-                st.code(f'"{rq_preview}"', language="text")
+            # Check if AI model is configured
+            screening_model = config.get("screening_model", "")
+            
+            # Generate AI search terms section
+            st.markdown("**🤖 AI-Generated Search Terms:**")
+            
+            if not screening_model:
+                st.warning("⚠️ No AI model configured. Please configure an Ollama model in settings.")
+                st.markdown("**Manual Search Terms:**")
                 
-                st.markdown("**2. Keyword Fallback (Editable):**")
-                # Create editable fallback search text
-                default_fallback = " OR ".join([f'"{kw}"' for kw in included_keywords])
-                
-                fallback_search_text = st.text_area(
-                    "Edit fallback search terms:",
-                    value=default_fallback,
-                    height=80,
-                    help="Modify the keyword search terms that will be used as fallback. Use OR, AND, NOT operators as needed.",
-                    key="fallback_search_edit"
-                )
-                
-                # Store the edited fallback in session state
-                st.session_state.custom_fallback_search = fallback_search_text
-                
-            else:
-                st.markdown("**Keyword Search (Editable):**")
-                # Create editable primary search text when no research question
+                # Fallback to manual keyword editing
                 default_search = " OR ".join([f'"{kw}"' for kw in included_keywords])
                 
-                primary_search_text = st.text_area(
-                    "Edit search terms:",
+                manual_search_text = st.text_area(
+                    "Edit search terms manually:",
                     value=default_search,
-                    height=80,
+                    height=120,
                     help="Modify the search terms. Use OR, AND, NOT operators as needed.",
-                    key="primary_search_edit"
+                    key="manual_search_edit"
                 )
                 
-                # Store the edited search in session state
-                st.session_state.custom_primary_search = primary_search_text
+                st.session_state.final_search_terms = manual_search_text
+                
+            else:
+                col_gen, col_refresh = st.columns([3, 1])
+                
+                with col_gen:
+                    if st.button("🤖 Generate AI Search Terms", use_container_width=True):
+                        with st.spinner("Generating optimized search terms..."):
+                            try:
+                                # Generate concise search terms using AI
+                                ai_search_terms = ollama_client.generate_concise_search_terms(pico_data, included_keywords)
+                                
+                                if ai_search_terms and ai_search_terms != "Failed to generate search terms":
+                                    st.session_state.ai_generated_search = ai_search_terms
+                                    st.success("✅ AI search terms generated!")
+                                else:
+                                    st.error("❌ Failed to generate AI search terms")
+                                    
+                            except Exception as e:
+                                st.error(f"❌ Error generating search terms: {str(e)}")
+                
+                with col_refresh:
+                    if st.button("🔄", help="Regenerate search terms"):
+                        if 'ai_generated_search' in st.session_state:
+                            del st.session_state.ai_generated_search
+                        st.rerun()
+                
+                # Display and edit AI-generated search terms
+                if 'ai_generated_search' in st.session_state:
+                    st.markdown("**✨ AI-Generated Search Query:**")
+                    
+                    edited_search_terms = st.text_area(
+                        "Review and edit AI-generated search terms:",
+                        value=st.session_state.ai_generated_search,
+                        height=120,
+                        help="The AI has generated optimized search terms. You can review and modify them as needed.",
+                        key="ai_search_edit"
+                    )
+                    
+                    st.session_state.final_search_terms = edited_search_terms
+                    
+                    # Show comparison with original keywords
+                    with st.expander("📊 Compare with Original Keywords"):
+                        st.markdown("**Original Keywords:**")
+                        st.code(" OR ".join([f'"{kw}"' for kw in included_keywords[:10]]), language="text")
+                        
+                        st.markdown("**AI-Optimized Query:**")
+                        st.code(edited_search_terms, language="text")
+                        
+                        # Show what will be sent to searcher
+                        st.markdown("**Parsed Keywords for Search:**")
+                        # Parse to show what the searcher will receive
+                        import re
+                        quoted_terms = re.findall(r'"([^"]*)"', edited_search_terms)
+                        remaining = re.sub(r'"[^"]*"', '', edited_search_terms)
+                        words = re.split(r'\b(?:OR|AND|NOT)\b', remaining, flags=re.IGNORECASE)
+                        parsed_preview = quoted_terms + [word.strip('() ').strip() for word in words if word.strip('() ').strip() and len(word.strip('() ').strip()) > 2]
+                        
+                        # Remove duplicates
+                        seen = set()
+                        final_preview = []
+                        for kw in parsed_preview:
+                            if kw.lower() not in seen and kw.strip():
+                                seen.add(kw.lower())
+                                final_preview.append(kw.strip())
+                        
+                        st.code(", ".join(final_preview[:10]) + (f" (+ {len(final_preview) - 10} more)" if len(final_preview) > 10 else ""), language="text")
+                
+                else:
+                    # Show default keywords while waiting for AI generation
+                    st.markdown("**Current Keywords Preview:**")
+                    default_search = " OR ".join([f'"{kw}"' for kw in included_keywords[:5]])
+                    if len(included_keywords) > 5:
+                        default_search += f" (+ {len(included_keywords) - 5} more keywords)"
+                    
+                    st.code(default_search, language="text")
+                    
+                    st.info("💡 Click 'Generate AI Search Terms' to get optimized search query")
+                    
+                    # Fallback to original keywords
+                    st.session_state.final_search_terms = " OR ".join([f'"{kw}"' for kw in included_keywords])
             
             estimated_results = len(search_sources) * max_results_override
             st.metric("Estimated Results", estimated_results)
@@ -350,33 +416,51 @@ def show(logger):
                     live_logger.info("🚀 Starting comprehensive literature search...")
                     live_logger.info(f"📊 Searching {len(search_sources)} sources for up to {max_results_override} results each")
                     
-                    # Get research question for enhanced search
-                    projects_df = load_projects()
-                    current_project = projects_df[projects_df['project_id'] == project_id].iloc[0]
-                    research_question = current_project.get('research_question', '')
+                    # Get optimized search terms
+                    search_terms = st.session_state.get('final_search_terms', '')
                     
-                    # Get search terms from user input or default
-                    
-                    # Check if user has customized search terms
-                    if research_question:
-                        # Use custom fallback if provided
-                        if 'custom_fallback_search' in st.session_state and st.session_state.custom_fallback_search.strip():
-                            # Parse the custom search text back to keywords
-                            custom_search = st.session_state.custom_fallback_search
-                            live_logger.info(f"🎯 Using custom fallback search: {custom_search[:100]}...")
-                            # Store custom search for the searcher to use
-                            st.session_state.parsed_custom_search = custom_search
+                    if search_terms:
+                        search_preview = search_terms[:100] + "..." if len(search_terms) > 100 else search_terms
+                        live_logger.info(f"🎯 Using search terms: {search_preview}")
+                        
+                        # Parse AI-generated search terms back to keyword list for the searcher
+                        # This handles complex search queries with AND, OR, NOT operators
+                        parsed_keywords = []
+                        
+                        # Extract quoted terms and individual words
+                        import re
+                        quoted_terms = re.findall(r'"([^"]*)"', search_terms)
+                        parsed_keywords.extend(quoted_terms)
+                        
+                        # Extract remaining terms (split by OR, AND, NOT and clean)
+                        remaining = re.sub(r'"[^"]*"', '', search_terms)  # Remove quoted parts
+                        words = re.split(r'\b(?:OR|AND|NOT)\b', remaining, flags=re.IGNORECASE)
+                        for word in words:
+                            clean_word = word.strip('() ').strip()
+                            if clean_word and len(clean_word) > 2:  # Skip very short terms
+                                parsed_keywords.append(clean_word)
+                        
+                        # Remove duplicates while preserving order
+                        seen = set()
+                        final_keywords = []
+                        for kw in parsed_keywords:
+                            if kw.lower() not in seen and kw.strip():
+                                seen.add(kw.lower())
+                                final_keywords.append(kw.strip())
+                        
+                        if final_keywords:
+                            live_logger.info(f"🔍 Parsed {len(final_keywords)} search terms from AI query")
+                            search_keywords = final_keywords
                         else:
-                            live_logger.info(f"🎯 Using research question for targeted search: {research_question[:80]}...")
+                            live_logger.warning("⚠️ Could not parse AI search terms, using fallback keywords")
+                            search_keywords = included_keywords
                     else:
-                        # Use custom primary search if provided
-                        if 'custom_primary_search' in st.session_state and st.session_state.custom_primary_search.strip():
-                            custom_search = st.session_state.custom_primary_search
-                            live_logger.info(f"🎯 Using custom search terms: {custom_search[:100]}...")
-                            # Store custom search for the searcher to use
-                            st.session_state.parsed_custom_search = custom_search
-                        else:
-                            live_logger.warning("⚠️ No research question found, using keywords only")
+                        # Fallback to basic keywords
+                        search_keywords = included_keywords
+                        live_logger.warning("⚠️ No optimized search terms found, using basic keywords")
+                    
+                    # Store search terms for the searcher
+                    st.session_state.current_search_keywords = search_keywords
                     
                     # Initialize searcher with live updates
                     searcher = RobustAcademicSearcher(
@@ -437,7 +521,7 @@ def show(logger):
                             
                             # Search single source
                             source_articles = searcher.search_single_source(
-                                keywords=included_keywords,
+                                keywords=st.session_state.get('current_search_keywords', included_keywords),
                                 source=source,
                                 logger=live_logger
                             )

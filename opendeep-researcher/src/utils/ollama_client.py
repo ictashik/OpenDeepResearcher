@@ -310,6 +310,50 @@ class OllamaClient:
         
         return ["Failed to generate keywords"]
 
+    def generate_concise_search_terms(self, pico_data: Dict[str, str], keywords: List[str]) -> str:
+        """Generate concise search terms from PICO framework and keywords for database searching."""
+        model = self.config.get("screening_model", "")
+        if not model:
+            return "No model configured"
+
+        system_prompt = """You are an expert in systematic review methodology and database searching.
+        Your task is to create concise, effective search terms for academic databases based on PICO framework and available keywords.
+        
+        Generate a single, well-structured search query that:
+        1. Uses Boolean operators (AND, OR, NOT) effectively
+        2. Groups related terms with parentheses
+        3. Is optimized for academic database searching
+        4. Balances comprehensiveness with precision
+        5. Is concise but captures the research question essence
+        
+        Return ONLY the search query string, no explanations or additional text."""
+
+        user_prompt = f"""
+        PICO Framework:
+        - Population: {pico_data.get('Population', '')}
+        - Intervention: {pico_data.get('Intervention', '')}
+        - Comparison: {pico_data.get('Comparison', '')}
+        - Outcome: {pico_data.get('Outcome', '')}
+        
+        Available Keywords: {', '.join(keywords[:20])}  # Limit to first 20 keywords
+        
+        Create a concise search query for academic databases:
+        """
+
+        response = self.generate_completion(model, user_prompt, system_prompt)
+        
+        if response:
+            # Clean up the response to ensure it's just the search query
+            search_terms = response.strip()
+            # Remove any markdown formatting or extra text
+            if search_terms.startswith('```'):
+                lines = search_terms.split('\n')
+                search_terms = '\n'.join([line for line in lines if not line.startswith('```')])
+            
+            return search_terms.strip()
+        
+        return "Failed to generate search terms"
+
     def generate_report(self, extracted_data: str) -> str:
         """Generate a systematic review report from extracted data."""
         model = self.config.get("extraction_model", "")
