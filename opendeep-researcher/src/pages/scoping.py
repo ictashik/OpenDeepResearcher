@@ -427,8 +427,15 @@ def show(logger):
                 "reliability": "Medium"
             },
             "arXiv": {
-                "description": "Preprint repository for physics, mathematics, CS",
+                "description": "Preprint repository for physics, mathematics, CS (web scraping)",
                 "best_for": "Latest research in STEM fields",
+                "coverage": "1991-present",
+                "api_required": False,
+                "reliability": "High"
+            },
+            "arXiv API": {
+                "description": "Official arXiv API for preprint repository",
+                "best_for": "Reliable access to STEM preprints with structured metadata",
                 "coverage": "1991-present",
                 "api_required": False,
                 "reliability": "High"
@@ -447,10 +454,10 @@ def show(logger):
                                                  config.get("search_sources", ["PubMed API", "Semantic Scholar", "Google Scholar (Scholarly)"]))
         
         st.markdown("**Select databases to search:**")
-        st.info("💡 **Recommended:** API-based sources (PubMed API, Semantic Scholar, CORE API) provide more reliable and structured data.")
+        st.info("💡 **Recommended:** API-based sources (PubMed API, Semantic Scholar, CORE API, arXiv API) provide more reliable and structured data.")
         
         # Group sources by type for better organization
-        api_sources = {k: v for k, v in available_sources.items() if not v.get("api_required", False) and k in ["PubMed API", "Semantic Scholar", "Google Scholar (Scholarly)"]}
+        api_sources = {k: v for k, v in available_sources.items() if not v.get("api_required", False) and k in ["PubMed API", "Semantic Scholar", "Google Scholar (Scholarly)", "arXiv API"]}
         premium_api_sources = {k: v for k, v in available_sources.items() if v.get("api_required", False)}
         web_sources = {k: v for k, v in available_sources.items() if k not in api_sources and k not in premium_api_sources}
         

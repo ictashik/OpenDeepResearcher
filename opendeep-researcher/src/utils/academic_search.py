@@ -234,6 +234,11 @@ class RobustAcademicSearcher:
                 articles, method_used = self.search_duckduckgo_robust(clean_keywords, logger)
             elif source == "arXiv":
                 articles, method_used = self.search_arxiv_robust(clean_keywords, logger)
+            elif source == "arXiv API":
+                # Direct API call without fallback to DuckDuckGo
+                api_articles = self.search_arxiv_api(clean_keywords, logger)
+                articles = api_articles
+                method_used = "arxiv_api" if articles else "failed"
             elif source == "ResearchGate":
                 articles, method_used = self.search_researchgate_robust(clean_keywords, logger)
             else:
@@ -285,6 +290,11 @@ class RobustAcademicSearcher:
                 articles, method_used = self.search_duckduckgo_robust(search_terms, logger)
             elif source == "arXiv":
                 articles, method_used = self.search_arxiv_robust(search_terms, logger)
+            elif source == "arXiv API":
+                # Use the comprehensive search strategy for arXiv API
+                api_articles = self.search_arxiv_api(search_terms, logger)
+                articles = api_articles
+                method_used = "arxiv_api" if articles else "failed"
             elif source == "ResearchGate":
                 articles, method_used = self.search_researchgate_robust(search_terms, logger)
             else:
@@ -732,12 +742,331 @@ class RobustAcademicSearcher:
                 combinations.append(chunk)
         
         return combinations[:4]  # Limit to 4 combinations to avoid too many requests
+
+    def search_arxiv_api(self, keywords: List[str], logger=None) -> List[Dict]:
+        """
+        Search arXiv using the official API.
+        Documentation: https://arxiv.org/help/api/user-manual
+        """
+        try:
+            if not keywords:
+                return []
+            
+            # Construct search query from keywords
+            # For better results, create a simple query without field prefixes first
+            search_terms = []
+            for keyword in keywords:
+                # Clean and format keyword
+                clean_keyword = keyword.strip().replace('"', '')
+                if clean_keyword:
+                    # For multi-word terms, keep them together
+                    search_terms.append(clean_keyword)
+            
+            # Try different query strategies in order of preference
+            search_queries = []
+            
+            # Strategy 1: Simple OR combination of all terms
+            if search_terms:
+                simple_query = ' OR '.join(f'"{term}"' if ' ' in term else term for term in search_terms)
+                search_queries.append(simple_query)
+            
+            # Strategy 2: Field-specific search (fallback)
+            if search_terms:
+                field_query = '+OR+'.join([
+                    f'all:"{term}"' if ' ' in term else f'all:{term}' 
+                    for term in search_terms
+                ])
+                search_queries.append(field_query)
+            
+            # Strategy 3: Very simple search with top keywords only
+            if len(search_terms) > 3:
+                top_terms = search_terms[:3]
+                simple_top_query = ' '.join(top_terms)
+                search_queries.append(simple_top_query)
+            
+            articles = []
+            
+            # Try each query strategy until we get results
+            for i, search_query in enumerate(search_queries):
+                try:
+                    if logger:
+                        strategy_name = ["Simple OR", "Field-specific", "Top keywords"][i]
+                        logger.info(f"🔍 arXiv API ({strategy_name}): {search_query[:100]}{'...' if len(search_query) > 100 else ''}")
+                    
+                    # Construct API URL
+                    base_url = "http://export.arxiv.org/api/query"
+                    params = {
+                        'search_query': search_query,
+                        'start': 0,
+                        'max_results': min(self.max_results_per_source, 2000),  # arXiv API limit
+                        'sortBy': 'relevance',
+                        'sortOrder': 'descending'
+                    }
+                    
+                    # Build URL with parameters
+                    param_string = '&'.join([f"{k}={quote_plus(str(v))}" for k, v in params.items()])
+                    url = f"{base_url}?{param_string}"
+                    
+                    if logger:
+                        logger.info(f"🌐 arXiv API URL: {url[:150]}{'...' if len(url) > 150 else ''}")
+                    
+                    # Set headers to identify the client
+                    headers = {
+                        'User-Agent': 'OpenDeepResearcher/1.0 (systematic-review-tool; contact@opendeepresearcher.org)'
+                    }
+                    
+                    # Make request with timeout
+                    response = self.session.get(url, headers=headers, timeout=30)
+                    response.raise_for_status()
+                    
+                    # Parse XML response
+                    current_articles = self._parse_arxiv_atom_feed(response.text, logger)
+                    
+                    if current_articles:
+                        articles = current_articles
+                        if logger:
+                            logger.success(f"✅ arXiv API ({strategy_name}): Found {len(articles)} articles")
+                        break  # Success, stop trying other strategies
+                    else:
+                        if logger:
+                            logger.warning(f"⚠️ arXiv API ({strategy_name}): No results")
+                        
+                except Exception as e:
+                    if logger:
+                        strategy_name = ["Simple OR", "Field-specific", "Top keywords"][i]
+                        logger.warning(f"⚠️ arXiv API ({strategy_name}) failed: {str(e)}")
+                    continue
+            
+            if not articles and logger:
+                logger.error("❌ All arXiv API search strategies failed")
+            
+            # Add delay to be respectful to the API
+            time.sleep(3)  # arXiv recommends 3 second delays
+            
+            return articles
+            
+        except Exception as e:
+            if logger:
+                logger.error(f"❌ arXiv API search failed: {str(e)}")
+            return []
+
+    def _parse_arxiv_atom_feed(self, xml_content: str, logger=None) -> List[Dict]:
+        """Parse arXiv Atom feed XML response."""
+        try:
+            import xml.etree.ElementTree as ET
+            
+            # Parse XML
+            root = ET.fromstring(xml_content)
+            
+            # Define namespaces - arXiv uses default namespace for atom
+            namespaces = {
+                'atom': 'http://www.w3.org/2005/Atom',
+                'arxiv': 'http://arxiv.org/schemas/atom',
+                'opensearch': 'http://a9.com/-/spec/opensearch/1.1/'
+            }
+            
+            articles = []
+            
+            # Check for errors first - simplified check
+            try:
+                error_titles = root.findall('.//title')
+                for title_elem in error_titles:
+                    if title_elem.text and "Error" in title_elem.text:
+                        if logger:
+                            logger.warning("⚠️ arXiv API returned an error response")
+                        return []
+            except Exception:
+                pass  # Continue even if error check fails
+            
+            # Get total results for logging
+            try:
+                total_results = root.find('.//opensearch:totalResults', namespaces)
+                if total_results is not None and logger:
+                    logger.info(f"📊 arXiv total results available: {total_results.text}")
+            except Exception:
+                pass  # Continue even if total results check fails
+            
+            # Parse each entry - use namespace since arXiv uses default atom namespace
+            try:
+                entries = root.findall('.//atom:entry', namespaces)
+                if not entries:
+                    # Fallback: try without namespace 
+                    entries = root.findall('.//entry')
+            except Exception as e:
+                if logger:
+                    logger.warning(f"⚠️ Error finding entries: {e}")
+                # Try alternate approach
+                entries = []
+                for elem in root.iter():
+                    if elem.tag.endswith('}entry') or elem.tag == 'entry':
+                        entries.append(elem)
+            
+            for entry in entries:
+                try:
+                    article = {}
+                    
+                    # Title - try both with and without namespace
+                    title_elem = entry.find('title') or entry.find('atom:title', namespaces)
+                    if title_elem is not None:
+                        article['title'] = title_elem.text.strip().replace('\n', ' ').replace('  ', ' ')
+                    else:
+                        continue  # Skip entries without title
+                    
+                    # arXiv ID and URL
+                    id_elem = entry.find('id') or entry.find('atom:id', namespaces)
+                    if id_elem is not None:
+                        arxiv_url = id_elem.text.strip()
+                        article['url'] = arxiv_url
+                        # Extract arXiv ID from URL
+                        if '/abs/' in arxiv_url:
+                            arxiv_id = arxiv_url.split('/abs/')[-1]
+                            article['arxiv_id'] = arxiv_id
+                    
+                    # Abstract
+                    summary_elem = entry.find('summary') or entry.find('atom:summary', namespaces)
+                    if summary_elem is not None:
+                        article['abstract'] = summary_elem.text.strip().replace('\n', ' ').replace('  ', ' ')
+                    
+                    # Authors
+                    try:
+                        author_elems = entry.findall('atom:author', namespaces)
+                        if not author_elems:
+                            author_elems = entry.findall('author')
+                        
+                        authors = []
+                        for author_elem in author_elems:
+                            # Try different possible name elements
+                            name_elem = None
+                            
+                            # Check for standard 'name' element with namespace
+                            name_elem = author_elem.find('atom:name', namespaces)
+                            
+                            # Check for standard 'name' element without namespace
+                            if name_elem is None:
+                                name_elem = author_elem.find('name')
+                            
+                            # Check for arXiv's 'n' element (shortened name)
+                            if name_elem is None:
+                                name_elem = author_elem.find('n')
+                                
+                            if name_elem is not None and name_elem.text:
+                                author_name = name_elem.text.strip()
+                                
+                                # Check for affiliation
+                                try:
+                                    affiliation_elem = author_elem.find('arxiv:affiliation', namespaces)
+                                    if affiliation_elem is not None and affiliation_elem.text:
+                                        author_name += f" ({affiliation_elem.text.strip()})"
+                                except Exception:
+                                    pass  # Continue without affiliation
+                                
+                                authors.append(author_name)
+                        
+                        article['authors'] = ', '.join(authors) if authors else 'Unknown'
+                        
+                    except Exception:
+                        article['authors'] = 'Unknown'
+                    
+                    # Publication dates
+                    published_elem = entry.find('published') or entry.find('atom:published', namespaces)
+                    updated_elem = entry.find('updated') or entry.find('atom:updated', namespaces)
+                    
+                    if published_elem is not None:
+                        pub_date = published_elem.text.strip()
+                        # Extract year from date (format: 2007-02-27T16:02:02-05:00)
+                        try:
+                            article['year'] = int(pub_date[:4])
+                        except (ValueError, IndexError):
+                            article['year'] = 0
+                        article['published_date'] = pub_date
+                    
+                    if updated_elem is not None:
+                        article['updated_date'] = updated_elem.text.strip()
+                    
+                    # Primary category
+                    primary_cat_elem = entry.find('arxiv:primary_category', namespaces)
+                    if primary_cat_elem is not None:
+                        article['primary_category'] = primary_cat_elem.get('term', '')
+                    
+                    # All categories
+                    category_elems = entry.findall('category') or entry.findall('atom:category', namespaces)
+                    categories = []
+                    for cat_elem in category_elems:
+                        term = cat_elem.get('term', '')
+                        if term:
+                            categories.append(term)
+                    article['categories'] = ', '.join(categories)
+                    
+                    # Journal reference
+                    journal_ref_elem = entry.find('arxiv:journal_ref', namespaces)
+                    if journal_ref_elem is not None:
+                        article['journal'] = journal_ref_elem.text.strip()
+                    
+                    # DOI
+                    doi_elem = entry.find('arxiv:doi', namespaces)
+                    if doi_elem is not None:
+                        article['doi'] = doi_elem.text.strip()
+                    
+                    # Comments
+                    comment_elem = entry.find('arxiv:comment', namespaces)
+                    if comment_elem is not None:
+                        article['comments'] = comment_elem.text.strip()
+                    
+                    # Links
+                    link_elems = entry.findall('link') or entry.findall('atom:link', namespaces)
+                    for link_elem in link_elems:
+                        rel = link_elem.get('rel', '')
+                        title_attr = link_elem.get('title', '')
+                        href = link_elem.get('href', '')
+                        
+                        if rel == 'alternate':
+                            article['url'] = href  # Abstract page URL
+                        elif rel == 'related' and title_attr == 'pdf':
+                            article['pdf_url'] = href
+                        elif rel == 'related' and title_attr == 'doi':
+                            article['doi_url'] = href
+                    
+                    # Set source
+                    article['source'] = 'arXiv API'
+                    
+                    # Set default values for missing fields
+                    if 'abstract' not in article:
+                        article['abstract'] = ''
+                    if 'year' not in article:
+                        article['year'] = 0
+                    if 'journal' not in article:
+                        article['journal'] = 'arXiv preprint'
+                    if 'doi' not in article:
+                        article['doi'] = ''
+                    
+                    articles.append(article)
+                    
+                except Exception as e:
+                    if logger:
+                        logger.warning(f"⚠️ Error parsing arXiv entry: {str(e)}")
+                    continue
+            
+            return articles
+            
+        except Exception as e:
+            if logger:
+                logger.error(f"❌ Error parsing arXiv XML: {str(e)}")
+            return []
     
     def search_arxiv_robust(self, keywords: List[str], logger=None) -> tuple[List[Dict], str]:
-        """Search arXiv preprint server."""
+        """Search arXiv preprint server using official API."""
         try:
             if logger:
-                logger.info("🔄 Trying arXiv search...")
+                logger.info("🔄 Trying arXiv API search...")
+            
+            # First try the official arXiv API
+            articles = self.search_arxiv_api(keywords, logger)
+            if articles:
+                return articles, "arxiv_api"
+                
+            # Fallback to DuckDuckGo search
+            if logger:
+                logger.info("🔄 Fallback: arXiv via DuckDuckGo...")
             
             articles = self.search_via_duckduckgo("arxiv.org", keywords, logger)
             if articles:

@@ -179,6 +179,7 @@ def show(logger):
                     "Google Scholar (Scholarly)", 
                     "DuckDuckGo Academic", 
                     "arXiv", 
+                    "arXiv API",
                     "ResearchGate",
                     "PubMed API",
                     "Semantic Scholar",
@@ -202,12 +203,12 @@ def show(logger):
             
             recommendations = {
                 "Medical/Health Research": ["PubMed API", "PubMed/MEDLINE", "Google Scholar (Scholarly)", "Semantic Scholar"],
-                "Multidisciplinary": ["Semantic Scholar", "Google Scholar (Scholarly)", "CORE API", "DuckDuckGo Academic", "arXiv"],
-                "Technology/Computer Science": ["Semantic Scholar", "Google Scholar (Scholarly)", "arXiv", "DuckDuckGo Academic"],
+                "Multidisciplinary": ["Semantic Scholar", "Google Scholar (Scholarly)", "CORE API", "DuckDuckGo Academic", "arXiv API"],
+                "Technology/Computer Science": ["Semantic Scholar", "Google Scholar (Scholarly)", "arXiv API", "DuckDuckGo Academic"],
                 "Psychology/Social Sciences": ["Semantic Scholar", "PsycINFO", "Google Scholar (Scholarly)", "DuckDuckGo Academic"],
-                "Open Access Focus": ["CORE API", "Semantic Scholar", "arXiv", "ResearchGate"],
-                "API Enhanced": ["PubMed API", "Semantic Scholar", "CORE API", "Google Scholar (Scholarly)"],
-                "Maximum Coverage": ["PubMed API", "Semantic Scholar", "CORE API", "Google Scholar", "Google Scholar (Scholarly)", "DuckDuckGo Academic", "arXiv", "ResearchGate"]
+                "Open Access Focus": ["CORE API", "Semantic Scholar", "arXiv API", "ResearchGate"],
+                "API Enhanced": ["PubMed API", "Semantic Scholar", "CORE API", "Google Scholar (Scholarly)", "arXiv API"],
+                "Maximum Coverage": ["PubMed API", "Semantic Scholar", "CORE API", "Google Scholar", "Google Scholar (Scholarly)", "DuckDuckGo Academic", "arXiv API", "ResearchGate"]
             }
             
             selected_combo = st.selectbox(
