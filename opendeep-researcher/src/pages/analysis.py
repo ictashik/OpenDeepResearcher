@@ -10,6 +10,16 @@ def show(logger):
     """Full-text analysis page."""
     st.subheader("Full-Text Analysis")
 
+    # Initialize session state for extraction stats
+    if 'extraction_stats' not in st.session_state:
+        st.session_state.extraction_stats = {
+            'total_articles': 0,
+            'processed': 0,
+            'successful': 0,
+            'failed': 0,
+            'skipped': 0
+        }
+
     # Check if project is selected
     project_id = st.session_state.get("current_project_id")
     if not project_id:
@@ -52,6 +62,23 @@ def show(logger):
         return
 
     st.success(f"Found {len(included_articles)} articles ready for full-text analysis")
+    
+    # Show status summary
+    if 'full_text_status' in included_articles.columns:
+        status_summary = included_articles['full_text_status'].value_counts()
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            awaiting_count = status_summary.get('Awaiting', 0)
+            st.metric("📝 Awaiting PDFs", awaiting_count)
+        
+        with col2:
+            acquired_count = status_summary.get('Acquired', 0)
+            st.metric("📄 PDFs Available", acquired_count)
+        
+        with col3:
+            abstract_count = status_summary.get('Abstract Only', 0)
+            st.metric("📄 Abstract Only", abstract_count)
 
     # Initialize PDF processor and Ollama client
     pdf_processor = PDFProcessor()
@@ -60,13 +87,81 @@ def show(logger):
 
     # Create tabs for different analysis phases
     tab1, tab2, tab3 = st.tabs(["Document Management", "AI Extraction", "Results Review"])
+    
+    # Helper function to safely get article ID
+    def get_safe_article_id(article, idx):
+        """Get article ID with graceful fallback."""
+        try:
+            # Try to get ID from article if column exists
+            if hasattr(article, 'index') and 'id' in article.index and pd.notna(article.get('id')):
+                return str(article['id'])
+            # Fallback to title-based ID
+            elif hasattr(article, 'index') and 'title' in article.index and article.get('title'):
+                # Create a simple hash-based ID from title
+                import hashlib
+                title_hash = hashlib.md5(str(article.get('title', f'untitled_{idx}')).encode()).hexdigest()[:8]
+                return f"article_{title_hash}"
+            # Final fallback to index
+            else:
+                return f"article_{idx}"
+        except Exception:
+            # Ultimate fallback
+            return f"article_{idx}"
 
     with tab1:
         st.subheader("Document Management")
         
+        # Check for existing PDFs in uploads directory
+        project_dir = get_project_dir(project_id)
+        uploads_dir = project_dir / "uploads"
+        existing_pdfs = []
+        
+        if uploads_dir.exists():
+            existing_pdfs = list(uploads_dir.glob("*.pdf"))
+            if existing_pdfs:
+                st.info(f"📁 Found {len(existing_pdfs)} PDF files in uploads directory")
+                
+                # Option to scan and update status for existing PDFs
+                if st.button("🔄 Scan for Existing PDFs", help="Check uploaded PDFs and update article status"):
+                    updated_count = 0
+                    for pdf_path in existing_pdfs:
+                        # Try to match PDF filename to articles
+                        pdf_name = pdf_path.name
+                        for idx, (_, article) in enumerate(included_articles.iterrows()):
+                            article_id = get_safe_article_id(article, idx)
+                            if str(article_id) in pdf_name or pdf_name.startswith(str(article_id)):
+                                # Update the article status
+                                try:
+                                    if 'id' in articles_df.columns and hasattr(article, 'index') and 'id' in article.index:
+                                        mask = articles_df['id'] == article.get('id')
+                                    else:
+                                        mask = articles_df['title'] == article.get('title', '')
+                                    
+                                    if 'full_text_status' not in articles_df.columns:
+                                        articles_df['full_text_status'] = 'Awaiting'
+                                    if 'pdf_path' not in articles_df.columns:
+                                        articles_df['pdf_path'] = ""
+                                    
+                                    articles_df.loc[mask, 'full_text_status'] = 'Acquired'
+                                    articles_df.loc[mask, 'pdf_path'] = str(pdf_path)
+                                    updated_count += 1
+                                    break
+                                except Exception as e:
+                                    logger.error(f"Error updating article {article_id}: {str(e)}")
+                    
+                    if updated_count > 0:
+                        # Save the updated articles back to file
+                        from src.utils.data_manager import save_screened_articles
+                        save_screened_articles(project_id, articles_df)
+                        st.success(f"✅ Updated status for {updated_count} articles with existing PDFs")
+                        st.rerun()
+                    else:
+                        st.warning("⚠️ Could not match any existing PDFs to articles")
+        
         # Show articles and their full-text status
         for idx, (_, article) in enumerate(included_articles.iterrows()):
-            with st.expander(f" {article['title'][:100]}...", expanded=False):
+            article_title_safe = article.get('title', f'Untitled Article {idx}')
+            with st.expander(f" {article_title_safe[:100]}...", expanded=False):
                 col1, col2 = st.columns([2, 1])
                 
                 with col1:
@@ -92,19 +187,36 @@ def show(logger):
                     
                     # File upload for manual PDF upload
                     pdf_file = st.file_uploader(
-                        f"Upload PDF", 
+                        "Upload PDF", 
                         type=["pdf"],
                         key=f"pdf_upload_{idx}",
                         help="Upload the full-text PDF for this article"
                     )
                     
                     if pdf_file is not None:
+                        # Validate PDF before saving
+                        with st.spinner("Validating PDF..."):
+                            validation_result = pdf_processor.validate_pdf(pdf_file)
+                            
+                            if not validation_result.get('valid', False):
+                                st.error(f"❌ Invalid PDF file: {validation_result.get('error', 'Unknown error')}")
+                                logger.error(f"PDF validation failed for {article.get('title', f'Article {idx}')[:50]}: {validation_result.get('error')}")
+                                continue
+                            
+                            # Check if PDF has readable text
+                            if not validation_result.get('has_text', False):
+                                st.warning("⚠️ PDF appears to be image-based and may not contain extractable text. Consider using OCR tools first.")
+                            
+                            page_count = validation_result.get('page_count', 0)
+                            st.info(f"✅ Valid PDF with {page_count} pages")
+                        
                         # Save uploaded file
                         project_dir = get_project_dir(project_id)
                         uploads_dir = project_dir / "uploads"
                         uploads_dir.mkdir(exist_ok=True)
                         
-                        file_path = uploads_dir / f"{article.get('id', idx)}_{pdf_file.name}"
+                        article_id = get_safe_article_id(article, idx)
+                        file_path = uploads_dir / f"{article_id}_{pdf_file.name}"
                         
                         with open(file_path, "wb") as f:
                             f.write(pdf_file.getbuffer())
@@ -112,11 +224,11 @@ def show(logger):
                         # Update article status - find a safe way to identify the article
                         try:
                             # Try to find by ID if it exists
-                            if 'id' in articles_df.columns and 'id' in article:
-                                mask = articles_df['id'] == article.get('id', idx)
+                            if 'id' in articles_df.columns and hasattr(article, 'index') and 'id' in article.index:
+                                mask = articles_df['id'] == article.get('id')
                             else:
                                 # Fallback to title matching
-                                mask = articles_df['title'] == article['title']
+                                mask = articles_df['title'] == article.get('title', '')
                             
                             # Ensure columns exist before updating
                             if 'full_text_status' not in articles_df.columns:
@@ -127,16 +239,39 @@ def show(logger):
                             articles_df.loc[mask, 'full_text_status'] = 'Acquired'
                             articles_df.loc[mask, 'pdf_path'] = str(file_path)
                             
+                            # Save the updated articles back to file
+                            from src.utils.data_manager import save_screened_articles
+                            save_screened_articles(project_id, articles_df)
+                            
                         except Exception as e:
                             st.error(f"Error updating article status: {str(e)}")
                             logger.error(f"Article status update error: {str(e)}")
                         
-                        logger.success(f"Uploaded PDF for: {article['title'][:50]}...")
+                        logger.success(f"Uploaded PDF for: {article.get('title', f'Article {idx}')[:50]}...")
                         st.success("PDF uploaded successfully!")
                         st.rerun()
 
     with tab2:
         st.subheader("AI-Powered Data Extraction")
+        
+        # Reload articles to get the latest status (in case PDFs were uploaded in tab1)
+        articles_df_fresh = load_screened_articles(project_id)
+        
+        # Re-filter for included articles with fresh data
+        try:
+            if 'final_decision' in articles_df_fresh.columns:
+                included_articles_fresh = articles_df_fresh[articles_df_fresh['final_decision'] == 'Include']
+            else:
+                included_articles_fresh = articles_df_fresh
+        except Exception as e:
+            st.error(f"Error filtering included articles: {str(e)}")
+            logger.error(f"Article filtering error: {str(e)}")
+            included_articles_fresh = articles_df_fresh  # Use all articles as fallback
+        
+        # Initialize full_text_status column if it doesn't exist (backup safety)
+        if 'full_text_status' not in included_articles_fresh.columns:
+            included_articles_fresh = included_articles_fresh.copy()
+            included_articles_fresh['full_text_status'] = 'Awaiting'
         
         # Check if extraction model is configured
         extraction_model = config.get("extraction_model", "")
@@ -161,66 +296,515 @@ def show(logger):
         # Articles with full text available
         try:
             # Ensure full_text_status column exists
-            if 'full_text_status' not in included_articles.columns:
-                included_articles['full_text_status'] = 'Awaiting'
+            if 'full_text_status' not in included_articles_fresh.columns:
+                included_articles_fresh['full_text_status'] = 'Awaiting'
             
-            full_text_articles = included_articles[included_articles['full_text_status'] == 'Acquired']
+            full_text_articles = included_articles_fresh[included_articles_fresh['full_text_status'] == 'Acquired']
         except Exception as e:
             st.error(f"Error accessing full text status: {str(e)}")
             logger.error(f"Full text status error: {str(e)}")
             full_text_articles = pd.DataFrame()  # Empty dataframe as fallback
         
         if full_text_articles.empty:
-            st.warning(" No articles with full text available. Please upload PDFs in the Document Management tab.")
+            # Show debugging information
+            st.warning("⚠️ No articles with full text available. Please upload PDFs in the Document Management tab.")
+            
+            # Debug information to help troubleshoot
+            with st.expander("🔍 Debug Information"):
+                st.write(f"Total included articles: {len(included_articles_fresh)}")
+                
+                if 'full_text_status' in included_articles_fresh.columns:
+                    status_counts = included_articles_fresh['full_text_status'].value_counts()
+                    st.write("Full text status distribution:")
+                    for status, count in status_counts.items():
+                        st.write(f"• {status}: {count} articles")
+                else:
+                    st.write("❌ No 'full_text_status' column found")
+                
+                if 'pdf_path' in included_articles_fresh.columns:
+                    non_empty_paths = included_articles_fresh['pdf_path'].notna().sum()
+                    st.write(f"Articles with PDF paths: {non_empty_paths}")
+                else:
+                    st.write("❌ No 'pdf_path' column found")
         else:
             st.success(f"Ready to extract data from {len(full_text_articles)} articles")
             
-            # Bulk extraction button
-            if st.button(" Start Bulk Extraction", use_container_width=True):
-                progress_bar = st.progress(0)
-                status_text = st.empty()
+            # Show extraction overview
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric("Articles Ready", len(full_text_articles))
+            
+            with col2:
+                # Check for existing extractions
+                from src.utils.data_manager import load_extracted_data
+                existing_extractions = load_extracted_data(project_id)
+                already_extracted = 0
                 
-                for idx, (_, article) in enumerate(full_text_articles.iterrows()):
-                    status_text.text(f"Processing: {article['title'][:50]}...")
+                if not existing_extractions.empty:
+                    # Match by article ID or title
+                    for idx, (_, article) in enumerate(full_text_articles.iterrows()):
+                        article_id = get_safe_article_id(article, idx)
+                        title = article.get('title', '')
+                        
+                        # Check if this article has been extracted
+                        if 'article_id' in existing_extractions.columns:
+                            if article_id in existing_extractions['article_id'].values:
+                                already_extracted += 1
+                        elif 'title' in existing_extractions.columns:
+                            if title in existing_extractions['title'].values:
+                                already_extracted += 1
+                
+                st.metric("Already Extracted", already_extracted)
+            
+            with col3:
+                remaining = len(full_text_articles) - already_extracted
+                st.metric("Remaining to Extract", remaining)
+            
+            # Show last extraction stats if available
+            if 'extraction_stats' in st.session_state and st.session_state.extraction_stats.get('processed', 0) > 0:
+                st.markdown("**📊 Last Extraction Results:**")
+                last_stats = st.session_state.extraction_stats
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.metric("Last Run - Processed", last_stats.get('processed', 0))
+                with col2:
+                    st.metric("Last Run - Successful", last_stats.get('successful', 0))
+                with col3:
+                    st.metric("Last Run - Failed", last_stats.get('failed', 0))
+            
+            # Show what will be extracted
+            st.markdown("**📋 Extraction Fields:**")
+            extraction_fields = list(extraction_prompts.keys())
+            field_cols = st.columns(min(3, len(extraction_fields)))
+            
+            for i, field in enumerate(extraction_fields):
+                with field_cols[i % len(field_cols)]:
+                    st.markdown(f"• {field.replace('_', ' ').title()}")
+            
+            # Advanced extraction options
+            with st.expander("⚙️ Advanced Options"):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    skip_existing = st.checkbox(
+                        "Skip already extracted articles",
+                        value=True,
+                        help="Skip articles that have already been processed"
+                    )
+                
+                with col2:
+                    # Future feature: batch processing
+                    st.info("💡 Batch processing options coming soon!")
+            
+            # Bulk extraction button with enhanced UX
+            if st.button("🚀 Start Comprehensive Data Extraction", use_container_width=True, type="primary"):
+                
+                # Initialize extraction stats in session state
+                if 'extraction_stats' not in st.session_state:
+                    st.session_state.extraction_stats = {
+                        'total_articles': 0,
+                        'processed': 0,
+                        'successful': 0,
+                        'failed': 0,
+                        'skipped': 0
+                    }
+                
+                # Create progress tracking containers
+                progress_container = st.empty()
+                live_table_container = st.empty()
+                logs_container = st.empty()
+                status_container = st.empty()
+                
+                # Initialize progress tracking
+                with progress_container.container():
+                    st.markdown("**🔄 Extraction Progress:**")
+                    overall_progress = st.progress(0)
+                    progress_text = st.empty()
+                
+                # Filter articles to process
+                articles_to_process = full_text_articles.copy()
+                
+                if skip_existing and not existing_extractions.empty:
+                    # Filter out already processed articles
+                    unprocessed_articles = []
+                    for idx, (_, article) in enumerate(full_text_articles.iterrows()):
+                        article_id = get_safe_article_id(article, idx)
+                        title = article.get('title', '')
+                        
+                        is_processed = False
+                        if 'article_id' in existing_extractions.columns and article_id:
+                            is_processed = article_id in existing_extractions['article_id'].values
+                        elif 'title' in existing_extractions.columns and title:
+                            is_processed = title in existing_extractions['title'].values
+                        
+                        if not is_processed:
+                            unprocessed_articles.append(article)
                     
-                    try:
-                        # Load PDF
-                        pdf_path = article.get('pdf_path', '')
-                        if pdf_path and Path(pdf_path).exists():
+                    if unprocessed_articles:
+                        articles_to_process = pd.DataFrame(unprocessed_articles)
+                    else:
+                        articles_to_process = pd.DataFrame()
+                
+                if articles_to_process.empty:
+                    with status_container.container():
+                        st.info("✅ All articles have already been processed!")
+                        st.balloons()
+                    return
+                
+                # Initialize live results tracking
+                live_results_data = []
+                st.session_state.extraction_stats = {
+                    'total_articles': len(articles_to_process),
+                    'processed': 0,
+                    'successful': 0,
+                    'failed': 0,
+                    'skipped': 0
+                }
+                extraction_stats = st.session_state.extraction_stats
+                
+                # Start extraction
+                import time
+                start_time = time.time()
+                
+                # Custom logger for real-time updates
+                class ExtractionLogger:
+                    def __init__(self, logs_container):
+                        self.logs_container = logs_container
+                        self.logs = []
+                        self.max_logs = 12
+                    
+                    def info(self, message):
+                        timestamp = time.strftime("%H:%M:%S")
+                        log_entry = f"[{timestamp}] ℹ️ {message}"
+                        self.logs.append(log_entry)
+                        self._update_display()
+                        logger.info(message)
+                    
+                    def success(self, message):
+                        timestamp = time.strftime("%H:%M:%S")
+                        log_entry = f"[{timestamp}] ✅ {message}"
+                        self.logs.append(log_entry)
+                        self._update_display()
+                        logger.success(message)
+                    
+                    def warning(self, message):
+                        timestamp = time.strftime("%H:%M:%S")
+                        log_entry = f"[{timestamp}] ⚠️ {message}"
+                        self.logs.append(log_entry)
+                        self._update_display()
+                        logger.warning(message)
+                    
+                    def error(self, message):
+                        timestamp = time.strftime("%H:%M:%S")
+                        log_entry = f"[{timestamp}] ❌ {message}"
+                        self.logs.append(log_entry)
+                        self._update_display()
+                        logger.error(message)
+                    
+                    def _update_display(self):
+                        recent_logs = self.logs[-self.max_logs:]
+                        with self.logs_container.container():
+                            st.markdown("**📋 Live Extraction Logs:**")
+                            
+                            log_text = ""
+                            for log in recent_logs:
+                                log_text += log + "\n"
+                            
+                            st.code(log_text, language=None)
+                
+                extraction_logger = ExtractionLogger(logs_container)
+                
+                # Function to update live results table
+                def update_live_table():
+                    if live_results_data:
+                        df_live = pd.DataFrame(live_results_data)
+                        with live_table_container.container():
+                            st.markdown("**📊 Live Extraction Results:**")
+                            
+                            # Style the dataframe
+                            styled_df = df_live.style.apply(lambda x: [
+                                'background-color: #d4edda; color: #155724' if '✅' in str(val) 
+                                else 'background-color: #fff3cd; color: #856404' if '⚠️' in str(val)
+                                else 'background-color: #f8d7da; color: #721c24' if '❌' in str(val)
+                                else 'background-color: #cce5ff; color: #004085' if '🔄' in str(val)
+                                else '' for val in x
+                            ], subset=['Status'])
+                            
+                            st.dataframe(styled_df, use_container_width=True)
+                            
+                            # Add real-time statistics
+                            col1, col2, col3, col4 = st.columns(4)
+                            with col1:
+                                st.metric("Processed", extraction_stats['processed'])
+                            with col2:
+                                st.metric("Successful", extraction_stats['successful'])
+                            with col3:
+                                st.metric("Failed", extraction_stats['failed'])
+                            with col4:
+                                progress_pct = (extraction_stats['processed'] / extraction_stats['total_articles']) * 100
+                                st.metric("Progress", f"{progress_pct:.1f}%")
+                
+                try:
+                    extraction_logger.info("🚀 Starting comprehensive data extraction...")
+                    extraction_logger.info(f"📊 Processing {len(articles_to_process)} articles with {len(extraction_fields)} extraction fields")
+                    extraction_logger.info(f"🤖 Using AI model: {extraction_model}")
+                    
+                    # Process articles
+                    for idx, (original_idx, article) in enumerate(articles_to_process.iterrows()):
+                        # Update progress
+                        progress = (idx + 1) / len(articles_to_process)
+                        overall_progress.progress(progress)
+                        
+                        article_title = article.get('title', f'Untitled Article {idx}')[:50] + "..." if len(str(article.get('title', ''))) > 50 else str(article.get('title', f'Untitled Article {idx}'))
+                        progress_text.text(f"🔄 Processing article {idx + 1}/{len(articles_to_process)}: {article_title}")
+                        
+                        extraction_logger.info(f"🔍 Processing: {article_title}")
+                        
+                        # Add to live results table
+                        live_results_data.append({
+                            'Article': article_title,
+                            'Status': '🔄 Processing...',
+                            'PDF Pages': 'Checking...',
+                            'Fields Extracted': 'Processing...',
+                            'Time': time.strftime("%H:%M:%S")
+                        })
+                        update_live_table()
+                        
+                        try:
+                            # Get safe article ID
+                            article_id = get_safe_article_id(article, idx)
+                            
+                            # Get PDF path
+                            pdf_path = article.get('pdf_path', '')
+                            
+                            if not pdf_path or not Path(pdf_path).exists():
+                                error_msg = f"PDF not found: {pdf_path if pdf_path else 'No path specified'}"
+                                extraction_logger.error(f"❌ {article_title}: {error_msg}")
+                                
+                                # Update live results
+                                live_results_data[-1].update({
+                                    'Status': '❌ PDF Missing',
+                                    'PDF Pages': 'N/A',
+                                    'Fields Extracted': 'N/A'
+                                })
+                                extraction_stats['failed'] += 1
+                                continue
+                            
+                            # Validate PDF first
+                            extraction_logger.info(f"🔍 Validating PDF: {Path(pdf_path).name}")
+                            pdf_validation = pdf_processor.validate_pdf(pdf_path)
+                            
+                            if not pdf_validation.get('valid', False):
+                                error_msg = f"PDF validation failed: {pdf_validation.get('error', 'Unknown error')}"
+                                extraction_logger.error(f"❌ {article_title}: {error_msg}")
+                                
+                                live_results_data[-1].update({
+                                    'Status': '❌ PDF Invalid',
+                                    'PDF Pages': 'N/A',
+                                    'Fields Extracted': 'N/A'
+                                })
+                                extraction_stats['failed'] += 1
+                                continue
+                            
+                            extraction_logger.info(f"📄 Extracting text from PDF: {Path(pdf_path).name}")
+                            
                             # Extract text from PDF
                             extracted_data = pdf_processor.extract_text_from_pdf(pdf_path)
                             
-                            if extracted_data['status'] == 'success':
-                                # Use AI to extract specific data
-                                ai_extracted = ollama_client.extract_data(
-                                    extracted_data['full_text'], 
-                                    extraction_prompts
-                                )
+                            if extracted_data['status'] != 'success':
+                                error_msg = f"PDF processing failed: {extracted_data.get('error', 'Unknown error')}"
+                                extraction_logger.error(f"❌ {article_title}: {error_msg}")
                                 
-                                # Add metadata
-                                ai_extracted.update({
-                                    'article_id': article.get('id', idx),
-                                    'title': article['title'],
-                                    'extraction_date': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
-                                    'pdf_pages': extracted_data.get('page_count', 0)
+                                live_results_data[-1].update({
+                                    'Status': '❌ PDF Processing Failed',
+                                    'PDF Pages': extracted_data.get('page_count', 'Unknown'),
+                                    'Fields Extracted': 'N/A'
                                 })
+                                extraction_stats['failed'] += 1
+                                continue
+                            
+                            page_count = extracted_data.get('page_count', 0)
+                            text_length = len(extracted_data.get('full_text', ''))
+                            
+                            extraction_logger.info(f"📊 PDF processed: {page_count} pages, {text_length:,} characters")
+                            
+                            # Update with PDF info
+                            live_results_data[-1].update({
+                                'Status': '🔄 AI Extracting...',
+                                'PDF Pages': str(page_count),
+                                'Fields Extracted': 'Processing...'
+                            })
+                            update_live_table()
+                            
+                            extraction_logger.info(f"🤖 Running AI extraction for {len(extraction_fields)} fields...")
+                            
+                            # Use AI to extract specific data
+                            ai_extracted = ollama_client.extract_data(
+                                extracted_data['full_text'], 
+                                extraction_prompts
+                            )
+                            
+                            if not ai_extracted:
+                                extraction_logger.error(f"❌ {article_title}: AI extraction returned no data")
+                                live_results_data[-1].update({
+                                    'Status': '❌ AI Extraction Failed',
+                                    'Fields Extracted': 'N/A'
+                                })
+                                extraction_stats['failed'] += 1
+                                continue
+                            
+                            # Count successfully extracted fields
+                            extracted_field_count = sum(1 for key, value in ai_extracted.items() 
+                                                     if value and str(value).strip() and str(value).lower() not in ['none', 'n/a', 'not provided'])
+                            
+                            # Add metadata
+                            ai_extracted.update({
+                                'article_id': article_id,
+                                'title': article.get('title', f'Article {idx}'),
+                                'extraction_date': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
+                                'pdf_pages': page_count,
+                                'text_length': text_length
+                            })
+                            
+                            # Save extracted data
+                            try:
+                                save_extracted_data(project_id, article_id, ai_extracted)
+                                extraction_logger.success(f"✅ {article_title}: Extracted {extracted_field_count}/{len(extraction_fields)} fields")
                                 
-                                # Save extracted data
-                                save_extracted_data(project_id, article.get('id', idx), ai_extracted)
-                                
-                                logger.success(f"Extracted data from: {article['title'][:50]}...")
-                            else:
-                                logger.error(f"Failed to process PDF: {article['title'][:50]}...")
-                                
-                    except Exception as e:
-                        logger.error(f"Error processing {article['title'][:50]}...: {str(e)}")
+                                # Update live results
+                                live_results_data[-1].update({
+                                    'Status': '✅ Completed',
+                                    'Fields Extracted': f'{extracted_field_count}/{len(extraction_fields)}'
+                                })
+                                extraction_stats['successful'] += 1
+                            except Exception as save_error:
+                                extraction_logger.error(f"❌ {article_title}: Failed to save extracted data: {str(save_error)}")
+                                live_results_data[-1].update({
+                                    'Status': '❌ Save Failed',
+                                    'Fields Extracted': f'{extracted_field_count}/{len(extraction_fields)} (not saved)'
+                                })
+                                extraction_stats['failed'] += 1
+                            
+                        except Exception as e:
+                            error_msg = f"Unexpected error: {str(e)}"
+                            extraction_logger.error(f"❌ {article_title}: {error_msg}")
+                            
+                            # Log detailed error information for debugging
+                            logger.error(f"Detailed error for {article_title}: {str(e)}")
+                            logger.error(f"Article data available: {list(article.index) if hasattr(article, 'index') else 'No index'}")
+                            
+                            live_results_data[-1].update({
+                                'Status': f'❌ Error: {str(e)[:30]}...',
+                                'PDF Pages': 'Unknown',
+                                'Fields Extracted': 'N/A'
+                            })
+                            extraction_stats['failed'] += 1
+                        
+                        finally:
+                            extraction_stats['processed'] += 1
+                            update_live_table()
+                            
+                            # Small delay to make progress visible
+                            time.sleep(0.3)
                     
-                    # Update progress
-                    progress_bar.progress((idx + 1) / len(full_text_articles))
+                    # Finalize results
+                    overall_progress.progress(1.0)
+                    progress_text.text("🔄 Finalizing extraction results...")
+                    
+                    elapsed_time = time.time() - start_time
+                    
+                    # Show final results
+                    with status_container.container():
+                        if extraction_stats['successful'] > 0:
+                            st.success(f"✅ Extraction completed in {elapsed_time:.1f} seconds!")
+                            st.balloons()
+                        else:
+                            st.warning("⚠️ Extraction completed but no articles were successfully processed.")
+                        
+                        # Final statistics
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        with col1:
+                            st.metric("Total Processed", extraction_stats['processed'])
+                        
+                        with col2:
+                            st.metric("Successful", extraction_stats['successful'])
+                        
+                        with col3:
+                            st.metric("Failed", extraction_stats['failed'])
+                        
+                        with col4:
+                            success_rate = (extraction_stats['successful'] / extraction_stats['processed']) * 100 if extraction_stats['processed'] > 0 else 0
+                            st.metric("Success Rate", f"{success_rate:.1f}%")
+                        
+                        # Show detailed results
+                        if extraction_stats['successful'] > 0:
+                            with st.expander("📊 Extraction Summary"):
+                                st.markdown(f"**Processing Time:** {elapsed_time:.1f} seconds")
+                                st.markdown(f"**Average Time per Article:** {elapsed_time/extraction_stats['processed']:.1f} seconds")
+                                
+                                # Load final extracted data for summary
+                                final_extracted = load_extracted_data(project_id)
+                                if not final_extracted.empty:
+                                    st.markdown(f"**Total Articles in Database:** {len(final_extracted)}")
+                                    
+                                    # Show field completion rates
+                                    st.markdown("**Field Completion Rates:**")
+                                    for field in extraction_fields:
+                                        if field in final_extracted.columns:
+                                            non_empty = final_extracted[field].notna().sum()
+                                            completion_rate = (non_empty / len(final_extracted)) * 100
+                                            st.markdown(f"• {field.replace('_', ' ').title()}: {non_empty}/{len(final_extracted)} ({completion_rate:.1f}%)")
+                        
+                        if extraction_stats['failed'] > 0:
+                            with st.expander("❌ Failed Extractions"):
+                                st.markdown("**Common Issues and Solutions:**")
+                                st.markdown("• **PDF Missing/Corrupted**: Re-upload the PDF files in Document Management")
+                                st.markdown("• **PDF Invalid**: File may be corrupted or not a valid PDF")
+                                st.markdown("• **Document Closed Error**: PyMuPDF concurrency issue - try processing fewer articles")
+                                st.markdown("• **AI Model Issues**: Check Ollama is running and model is available")
+                                st.markdown("• **Text Extraction Failed**: PDFs may be image-based (need OCR)")
+                                st.markdown("• **Memory Issues**: Try processing fewer articles at once")
+                                st.markdown("• **File Permission Issues**: Check that PDF files are not locked or in use")
+                                
+                                st.markdown("**Troubleshooting Steps:**")
+                                st.markdown("1. Go to Document Management tab and re-upload problematic PDFs")
+                                st.markdown("2. Check that Ollama is running: `ollama list` in terminal")
+                                st.markdown("3. Verify PDF files are not corrupted by opening them manually")
+                                st.markdown("4. For image-based PDFs, use OCR tools to convert to text-searchable PDFs")
+                                st.markdown("5. Close any PDF viewers that might have the files open")
+                        
+                        st.info("🔄 **Next Steps:** Go to the Results Review tab to examine and edit the extracted data.")
                 
-                status_text.text(" Extraction complete!")
-                st.success("Data extraction completed!")
-                st.rerun()
+                except Exception as e:
+                    overall_progress.progress(1.0)
+                    with status_container.container():
+                        st.error(f"❌ Extraction process failed: {str(e)}")
+                        extraction_logger.error(f"❌ Critical error: {str(e)}")
+                        
+                        with st.expander("🔍 Error Details"):
+                            st.code(str(e))
+                            st.markdown("**Possible Solutions:**")
+                            st.markdown("• Check that Ollama is running")
+                            st.markdown("• Verify that the extraction model is available")
+                            st.markdown("• Ensure PDF files are accessible")
+                            st.markdown("• Check system resources (memory, disk space)")
+                            st.markdown("• Try processing fewer articles at once")
+            
+            # Retry failed extractions
+            extraction_stats = st.session_state.get('extraction_stats', {'failed': 0})
+            if extraction_stats.get('failed', 0) > 0:
+                st.markdown("---")
+                st.markdown("**🔄 Retry Failed Extractions**")
+                
+                if st.button("🔁 Retry Failed Articles", use_container_width=True):
+                    st.info("💡 **Retry Feature**: This will attempt to re-process articles that failed during the last extraction run.")
+                    st.warning("⚠️ **Note**: Retry functionality will be implemented in the next update. For now, please:")
+                    st.markdown("1. Check the failed articles in Document Management")
+                    st.markdown("2. Re-upload any corrupted PDFs")
+                    st.markdown("3. Run the extraction process again")
             
             # Individual article extraction
             st.markdown("---")
@@ -230,12 +814,16 @@ def show(logger):
                 col1, col2 = st.columns([3, 1])
                 
                 with col1:
-                    st.write(f" {article['title'][:80]}...")
+                    article_title = article.get('title', f'Untitled Article {idx}')
+                    st.write(f" {article_title[:80]}...")
                 
                 with col2:
-                    if st.button(f"Extract", key=f"extract_{idx}"):
+                    if st.button("Extract", key=f"extract_{idx}"):
                         with st.spinner("Extracting data..."):
                             try:
+                                # Get safe article ID
+                                article_id = get_safe_article_id(article, idx)
+                                
                                 pdf_path = article.get('pdf_path', '')
                                 if pdf_path and Path(pdf_path).exists():
                                     extracted_data = pdf_processor.extract_text_from_pdf(pdf_path)
@@ -247,28 +835,31 @@ def show(logger):
                                         )
                                         
                                         ai_extracted.update({
-                                            'article_id': article.get('id', idx),
-                                            'title': article['title'],
+                                            'article_id': article_id,
+                                            'title': article.get('title', f'Article {idx}'),
                                             'extraction_date': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
                                             'pdf_pages': extracted_data.get('page_count', 0)
                                         })
                                         
-                                        save_extracted_data(project_id, article.get('id', idx), ai_extracted)
-                                        
-                                        st.success(" Data extracted!")
-                                        logger.success(f"Extracted data from: {article['title'][:50]}...")
+                                        try:
+                                            save_extracted_data(project_id, article_id, ai_extracted)
+                                            st.success(" Data extracted!")
+                                            logger.success(f"Extracted data from: {article.get('title', f'Article {idx}')[:50]}...")
+                                        except Exception as save_error:
+                                            st.error(f" Data extracted but failed to save: {str(save_error)}")
+                                            logger.error(f"Failed to save extraction for {article.get('title', f'Article {idx}')[:50]}: {str(save_error)}")
                                     else:
                                         st.error(" Failed to process PDF")
                                         
                             except Exception as e:
                                 st.error(f" Error: {str(e)}")
-                                logger.error(f"Error processing {article['title'][:50]}...: {str(e)}")
+                                logger.error(f"Error processing {article.get('title', f'Article {idx}')[:50]}...: {str(e)}")
 
     with tab3:
         st.subheader("Extraction Results Review")
         
         # Load extracted data
-        from utils.data_manager import load_extracted_data
+        from src.utils.data_manager import load_extracted_data
         extracted_df = load_extracted_data(project_id)
         
         if extracted_df.empty:

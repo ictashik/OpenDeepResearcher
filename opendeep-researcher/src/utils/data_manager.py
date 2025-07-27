@@ -132,10 +132,14 @@ def save_extracted_data(project_id: str, article_id: str, extracted_data: Dict):
     new_row = {'article_id': article_id, **extracted_data}
     
     # Add or update the row
-    mask = df['article_id'] == article_id
-    if mask.any():
-        df.loc[mask, :] = pd.Series(new_row)
+    if not df.empty and 'article_id' in df.columns:
+        mask = df['article_id'] == article_id
+        if mask.any():
+            df.loc[mask, :] = pd.Series(new_row)
+        else:
+            df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
     else:
+        # First row or no article_id column yet
         df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
     
     df.to_csv(data_file, index=False)

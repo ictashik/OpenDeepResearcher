@@ -1,14 +1,75 @@
 import fitz  # PyMuPDF
-import io
-from typing import Dict, List, Optional
+from typing import Dict, List
 import re
 
 class PDFProcessor:
     def __init__(self):
         pass
 
+    def validate_pdf(self, pdf_file) -> Dict[str, str]:
+        """Validate that a PDF file can be opened and read."""
+        doc = None
+        try:
+            if hasattr(pdf_file, 'read'):
+                pdf_bytes = pdf_file.read()
+                pdf_file.seek(0)
+                doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            elif isinstance(pdf_file, (str, bytes)):
+                if isinstance(pdf_file, bytes):
+                    doc = fitz.open(stream=pdf_file, filetype="pdf")
+                else:
+                    doc = fitz.open(pdf_file)
+            else:
+                return {
+                    "valid": False,
+                    "error": f"Unsupported pdf_file type: {type(pdf_file)}"
+                }
+
+            if doc is None:
+                return {
+                    "valid": False,
+                    "error": "Failed to open PDF document"
+                }
+
+            page_count = len(doc)
+            
+            # Try to read the first page as a test
+            if page_count > 0:
+                test_page = doc.load_page(0)
+                test_text = test_page.get_text()
+                
+            return {
+                "valid": True,
+                "page_count": page_count,
+                "has_text": len(test_text.strip()) > 0 if page_count > 0 else False
+            }
+
+        except Exception as e:
+            return {
+                "valid": False,
+                "error": str(e)
+            }
+        finally:
+            if doc is not None:
+                try:
+                    doc.close()
+                except Exception:
+                    pass
+
     def extract_text_from_pdf(self, pdf_file) -> Dict[str, str]:
         """Extract text from a PDF file and organize by sections."""
+        # First validate the PDF
+        validation_result = self.validate_pdf(pdf_file)
+        if not validation_result.get("valid", False):
+            return {
+                "full_text": "",
+                "sections": {},
+                "page_count": 0,
+                "status": "error",
+                "error": f"PDF validation failed: {validation_result.get('error', 'Unknown validation error')}"
+            }
+
+        doc = None
         try:
             # Handle both file path and file-like objects
             if hasattr(pdf_file, 'read'):
@@ -16,20 +77,31 @@ class PDFProcessor:
                 pdf_bytes = pdf_file.read()
                 pdf_file.seek(0)  # Reset file pointer
                 doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            elif isinstance(pdf_file, (str, bytes)):
+                # It's a file path string or bytes
+                if isinstance(pdf_file, bytes):
+                    doc = fitz.open(stream=pdf_file, filetype="pdf")
+                else:
+                    # String path
+                    doc = fitz.open(pdf_file)
             else:
-                # It's a file path
-                doc = fitz.open(pdf_file)
+                raise ValueError(f"Unsupported pdf_file type: {type(pdf_file)}")
+
+            if doc is None:
+                raise ValueError("Failed to open PDF document")
 
             full_text = ""
-            sections = {}
+            page_count = len(doc)  # Get page count before processing
             
             # Extract text from all pages
-            for page_num in range(len(doc)):
-                page = doc.load_page(page_num)
-                page_text = page.get_text()
-                full_text += page_text + "\n"
-
-            doc.close()
+            for page_num in range(page_count):
+                try:
+                    page = doc.load_page(page_num)
+                    page_text = page.get_text()
+                    full_text += page_text + "\n"
+                except Exception as page_error:
+                    # Skip problematic pages but continue processing
+                    full_text += f"\n[Error reading page {page_num + 1}: {str(page_error)}]\n"
 
             # Organize text into sections
             sections = self._identify_sections(full_text)
@@ -37,7 +109,7 @@ class PDFProcessor:
             return {
                 "full_text": full_text,
                 "sections": sections,
-                "page_count": len(doc) if doc else 0,
+                "page_count": page_count,
                 "status": "success"
             }
 
@@ -49,6 +121,13 @@ class PDFProcessor:
                 "status": "error",
                 "error": str(e)
             }
+        finally:
+            # Ensure document is always closed
+            if doc is not None:
+                try:
+                    doc.close()
+                except Exception:
+                    pass  # Ignore errors during cleanup
 
     def _identify_sections(self, text: str) -> Dict[str, str]:
         """Identify and extract common academic paper sections."""
@@ -98,40 +177,52 @@ class PDFProcessor:
 
     def extract_tables_and_figures(self, pdf_file) -> Dict[str, List]:
         """Extract information about tables and figures in the PDF."""
+        doc = None
         try:
             if hasattr(pdf_file, 'read'):
                 pdf_bytes = pdf_file.read()
                 pdf_file.seek(0)
                 doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            elif isinstance(pdf_file, (str, bytes)):
+                if isinstance(pdf_file, bytes):
+                    doc = fitz.open(stream=pdf_file, filetype="pdf")
+                else:
+                    doc = fitz.open(pdf_file)
             else:
-                doc = fitz.open(pdf_file)
+                raise ValueError(f"Unsupported pdf_file type: {type(pdf_file)}")
+
+            if doc is None:
+                raise ValueError("Failed to open PDF document")
 
             tables = []
             figures = []
+            page_count = len(doc)
 
-            for page_num in range(len(doc)):
-                page = doc.load_page(page_num)
-                page_text = page.get_text()
+            for page_num in range(page_count):
+                try:
+                    page = doc.load_page(page_num)
+                    page_text = page.get_text()
 
-                # Find table references
-                table_matches = re.findall(r'(table\s+\d+[:\.]?\s*[^\n]*)', page_text, re.IGNORECASE)
-                for match in table_matches:
-                    tables.append({
-                        "page": page_num + 1,
-                        "reference": match.strip(),
-                        "context": self._get_context(page_text, match)
-                    })
+                    # Find table references
+                    table_matches = re.findall(r'(table\s+\d+[:\.]?\s*[^\n]*)', page_text, re.IGNORECASE)
+                    for match in table_matches:
+                        tables.append({
+                            "page": page_num + 1,
+                            "reference": match.strip(),
+                            "context": self._get_context(page_text, match)
+                        })
 
-                # Find figure references
-                figure_matches = re.findall(r'(figure\s+\d+[:\.]?\s*[^\n]*)', page_text, re.IGNORECASE)
-                for match in figure_matches:
-                    figures.append({
-                        "page": page_num + 1,
-                        "reference": match.strip(),
-                        "context": self._get_context(page_text, match)
-                    })
-
-            doc.close()
+                    # Find figure references
+                    figure_matches = re.findall(r'(figure\s+\d+[:\.]?\s*[^\n]*)', page_text, re.IGNORECASE)
+                    for match in figure_matches:
+                        figures.append({
+                            "page": page_num + 1,
+                            "reference": match.strip(),
+                            "context": self._get_context(page_text, match)
+                        })
+                except Exception:
+                    # Skip problematic pages but continue processing
+                    continue
 
             return {
                 "tables": tables,
@@ -146,6 +237,13 @@ class PDFProcessor:
                 "status": "error",
                 "error": str(e)
             }
+        finally:
+            # Ensure document is always closed
+            if doc is not None:
+                try:
+                    doc.close()
+                except Exception:
+                    pass  # Ignore errors during cleanup
 
     def _get_context(self, text: str, match: str, context_chars: int = 200) -> str:
         """Get surrounding context for a match."""
@@ -195,7 +293,7 @@ class PDFProcessor:
 
             return citations
 
-        except Exception as e:
+        except Exception:
             return []
 
 # Legacy functions for backward compatibility
