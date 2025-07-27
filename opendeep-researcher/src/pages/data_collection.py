@@ -233,17 +233,36 @@ def show(logger):
                 rq_preview = research_question[:60] + "..." if len(research_question) > 60 else research_question
                 st.code(f'"{rq_preview}"', language="text")
                 
-                st.markdown("**2. Keyword Fallback:**")
-                keyword_preview = " OR ".join([f'"{kw}"' for kw in included_keywords[:2]])
-                if len(included_keywords) > 2:
-                    keyword_preview += " OR ..."
-                st.code(keyword_preview, language="text")
+                st.markdown("**2. Keyword Fallback (Editable):**")
+                # Create editable fallback search text
+                default_fallback = " OR ".join([f'"{kw}"' for kw in included_keywords])
+                
+                fallback_search_text = st.text_area(
+                    "Edit fallback search terms:",
+                    value=default_fallback,
+                    height=80,
+                    help="Modify the keyword search terms that will be used as fallback. Use OR, AND, NOT operators as needed.",
+                    key="fallback_search_edit"
+                )
+                
+                # Store the edited fallback in session state
+                st.session_state.custom_fallback_search = fallback_search_text
+                
             else:
-                st.markdown("**Keyword Search:**")
-                keyword_preview = " OR ".join([f'"{kw}"' for kw in included_keywords[:3]])
-                if len(included_keywords) > 3:
-                    keyword_preview += " OR ..."
-                st.code(keyword_preview, language="text")
+                st.markdown("**Keyword Search (Editable):**")
+                # Create editable primary search text when no research question
+                default_search = " OR ".join([f'"{kw}"' for kw in included_keywords])
+                
+                primary_search_text = st.text_area(
+                    "Edit search terms:",
+                    value=default_search,
+                    height=80,
+                    help="Modify the search terms. Use OR, AND, NOT operators as needed.",
+                    key="primary_search_edit"
+                )
+                
+                # Store the edited search in session state
+                st.session_state.custom_primary_search = primary_search_text
             
             estimated_results = len(search_sources) * max_results_override
             st.metric("Estimated Results", estimated_results)
@@ -336,10 +355,28 @@ def show(logger):
                     current_project = projects_df[projects_df['project_id'] == project_id].iloc[0]
                     research_question = current_project.get('research_question', '')
                     
+                    # Get search terms from user input or default
+                    
+                    # Check if user has customized search terms
                     if research_question:
-                        live_logger.info(f"🎯 Using research question for targeted search: {research_question[:80]}...")
+                        # Use custom fallback if provided
+                        if 'custom_fallback_search' in st.session_state and st.session_state.custom_fallback_search.strip():
+                            # Parse the custom search text back to keywords
+                            custom_search = st.session_state.custom_fallback_search
+                            live_logger.info(f"🎯 Using custom fallback search: {custom_search[:100]}...")
+                            # Store custom search for the searcher to use
+                            st.session_state.parsed_custom_search = custom_search
+                        else:
+                            live_logger.info(f"🎯 Using research question for targeted search: {research_question[:80]}...")
                     else:
-                        live_logger.warning("⚠️ No research question found, using keywords only")
+                        # Use custom primary search if provided
+                        if 'custom_primary_search' in st.session_state and st.session_state.custom_primary_search.strip():
+                            custom_search = st.session_state.custom_primary_search
+                            live_logger.info(f"🎯 Using custom search terms: {custom_search[:100]}...")
+                            # Store custom search for the searcher to use
+                            st.session_state.parsed_custom_search = custom_search
+                        else:
+                            live_logger.warning("⚠️ No research question found, using keywords only")
                     
                     # Initialize searcher with live updates
                     searcher = RobustAcademicSearcher(
@@ -389,7 +426,6 @@ def show(logger):
                         live_logger.info(f"🎯 Starting search for {source} ({i+1}/{total_sources})...")
                         
                         # Show current source being searched
-                        current_source_status = f"🔄 Currently searching: **{source}**"
                         
                         try:
                             # Add estimated time info
@@ -587,7 +623,7 @@ def show(logger):
                                     st.write("**Failed Methods:**")
                                     for method in search_stats['failed_methods']:
                                         st.markdown(f"• {method}")
-                        except:
+                        except Exception:
                             pass
         
         else:
