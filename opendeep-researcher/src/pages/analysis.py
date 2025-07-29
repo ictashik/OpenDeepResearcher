@@ -1,8 +1,17 @@
 import streamlit as st
 import pandas as pd
+import hashlib
+import re
+import time
 from pathlib import Path
 from src.utils.pdf_processor import PDFProcessor
-from src.utils.data_manager import load_screened_articles, save_extracted_data, get_project_dir
+from src.utils.data_manager import (
+    load_screened_articles, 
+    save_extracted_data, 
+    get_project_dir, 
+    save_screened_articles, 
+    load_extracted_data
+)
 from src.utils.ollama_client import OllamaClient
 from src.utils.data_manager import load_config
 
@@ -98,7 +107,6 @@ def show(logger):
             # Fallback to title-based ID
             elif hasattr(article, 'index') and 'title' in article.index and article.get('title'):
                 # Create a simple hash-based ID from title
-                import hashlib
                 title_hash = hashlib.md5(str(article.get('title', f'untitled_{idx}')).encode()).hexdigest()[:8]
                 return f"article_{title_hash}"
             # Final fallback to index
@@ -121,17 +129,172 @@ def show(logger):
             if existing_pdfs:
                 st.info(f"📁 Found {len(existing_pdfs)} PDF files in uploads directory")
                 
-                # Option to scan and update status for existing PDFs
-                if st.button("🔄 Scan for Existing PDFs", help="Check uploaded PDFs and update article status"):
+                # Quick diagnostic information
+                with st.expander("🔍 PDF Matching Diagnostics", expanded=False):
+                    st.markdown("**Current PDF Files:**")
+                    
+                    # Show sample of PDF filenames
+                    sample_pdfs = existing_pdfs[:10] if len(existing_pdfs) > 10 else existing_pdfs
+                    for pdf in sample_pdfs:
+                        st.code(pdf.name)
+                    
+                    if len(existing_pdfs) > 10:
+                        st.caption(f"... and {len(existing_pdfs) - 10} more files")
+                    
+                    st.markdown("**Article IDs being matched against:**")
+                    sample_articles = included_articles.head(5)
+                    for idx, (_, article) in enumerate(sample_articles.iterrows()):
+                        article_id = get_safe_article_id(article, idx)
+                        title = article.get('title', 'Unknown')[:50]
+                        st.code(f"ID: {article_id} | Title: {title}...")
+                    
+                    if len(included_articles) > 5:
+                        st.caption(f"... and {len(included_articles) - 5} more articles")
+                    
+                    # Show current matches
+                    current_matches = included_articles[included_articles.get('full_text_status', '') == 'Acquired']
+                    st.markdown(f"**Current Matches:** {len(current_matches)} articles have PDFs assigned")
+                
+                # Enhanced PDF scanning button
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Option to scan and update status for existing PDFs
+                    scan_button = st.button("🔄 Scan for Existing PDFs", help="Check uploaded PDFs and update article status")
+                        
+                with col2:
+                    # Reset all PDF assignments and re-scan
+                    reset_button = st.button("🔄 Reset & Re-scan All", help="Clear all PDF assignments and perform fresh matching", type="secondary")
+                
+                # Handle reset button
+                if reset_button:
+                    with st.spinner("Resetting all PDF assignments..."):
+                        # Reset all articles to 'Awaiting' status
+                        articles_df['full_text_status'] = 'Awaiting'
+                        articles_df['pdf_path'] = ""
+                        save_screened_articles(project_id, articles_df)
+                        st.success("✅ Reset complete! Now click 'Scan for Existing PDFs' to perform fresh matching.")
+                        st.rerun()
+                
+                # Handle scan button
+                if scan_button:
                     updated_count = 0
-                    for pdf_path in existing_pdfs:
-                        # Try to match PDF filename to articles
-                        pdf_name = pdf_path.name
-                        for idx, (_, article) in enumerate(included_articles.iterrows()):
+                    unmatched_pdfs = []
+                    
+                    # Show progress while scanning
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    # Enhanced PDF matching with multiple strategies
+                    def try_match_pdf_to_article(pdf_path, articles):
+                        """Try multiple strategies to match PDF to articles."""
+                        pdf_name = pdf_path.name.lower()
+                        pdf_stem = pdf_path.stem.lower()  # filename without extension
+                        
+                        matches = []
+                        
+                        for idx, (_, article) in enumerate(articles.iterrows()):
                             article_id = get_safe_article_id(article, idx)
-                            if str(article_id) in pdf_name or pdf_name.startswith(str(article_id)):
-                                # Update the article status
+                            title = str(article.get('title', '')).lower()
+                            authors = str(article.get('authors', '')).lower()
+                            year = str(article.get('year', ''))
+                            
+                            # Strategy 1: PDF number to article index match (most reliable)
+                            # Extract the number prefix from PDF filename (e.g., "12_" -> 12)
+                            pdf_number_match = re.match(r'^(\d+)_', pdf_path.name)
+                            if pdf_number_match:
+                                pdf_number = int(pdf_number_match.group(1))
+                                # Check if this number corresponds to the article's position (1-based indexing)
+                                if pdf_number == idx + 1:  # idx is 0-based, PDF numbers are 1-based
+                                    matches.append((article, idx, f'pdf_number({pdf_number})', 98))
+                                    continue
+                            
+                            # Strategy 2: Exact article ID match (fallback)
+                            if str(article_id).lower() in pdf_name:
+                                matches.append((article, idx, 'article_id', 95))
+                                continue
+                            
+                            # Strategy 2.5: Special handling for search-related content
+                            # Since all your articles are about "search", give bonus points for search-related PDFs
+                            if 'search' in pdf_stem and 'search' in title:
+                                search_bonus = 20
+                            else:
+                                search_bonus = 0
+                            
+                            # Strategy 3: Very gentle title matching - focus on first few words
+                            if title and len(title) > 5:
+                                # Get first 3-5 words from title (much more gentle approach)
+                                title_words = title.split()[:5]  # Just first 5 words
+                                title_words = [w.lower() for w in title_words if len(w) > 2]  # Shorter words allowed
+                                
+                                if len(title_words) >= 1:  # Even 1 word match is OK
+                                    # Count how many of these first words appear in PDF name
+                                    matches_found = sum(1 for word in title_words if word in pdf_stem)
+                                    
+                                    if matches_found >= 1:  # Just need 1 word from first few words
+                                        # Very generous confidence scoring
+                                        base_confidence = 40 + (matches_found * 15)  # Start higher
+                                        confidence = min(95, base_confidence + search_bonus)
+                                        matches.append((article, idx, f'first_words({matches_found}/{len(title_words)})', confidence))
+                            
+                            # Strategy 3.5: Even gentler - any significant word match
+                            if title and len(title) > 10:
+                                # Extract ANY significant words from title (>2 chars, not common words)
+                                stop_words = {'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'from', 'up', 'about', 'into', 'through', 'during', 'before', 'after', 'above', 'below', 'between', 'among', 'under', 'within', 'without', 'against', 'toward', 'upon', 'concerning', 'per', 'an', 'a', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can'}
+                                title_words = [w for w in title.split() if len(w) > 2 and w not in stop_words]
+                                
+                                if len(title_words) >= 1:
+                                    # Count how many title words appear in PDF name
+                                    matches_found = sum(1 for word in title_words if word in pdf_stem)
+                                    
+                                    if matches_found >= 1:  # Just need ANY word match
+                                        match_ratio = matches_found / len(title_words)
+                                        confidence = min(85, 30 + (match_ratio * 30) + (matches_found * 5) + search_bonus)
+                                        matches.append((article, idx, f'any_words({matches_found}/{len(title_words)})', confidence))
+                            
+                            # Strategy 4: Author lastname + year combination
+                            if authors and year:
+                                # Extract first author's last name
+                                first_author = authors.split(',')[0].split(';')[0].strip()
+                                if first_author and len(first_author) > 2:
+                                    author_lastname = first_author.split()[-1] if ' ' in first_author else first_author
+                                    
+                                    if len(author_lastname) > 3 and author_lastname.lower() in pdf_stem and year in pdf_stem:
+                                        matches.append((article, idx, f'author_year({author_lastname}_{year})', 80))
+                        
+                        # Return the best match (highest confidence)
+                        if matches:
+                            return max(matches, key=lambda x: x[3])
+                        return None
+                    
+                    # Process each PDF
+                    assigned_articles = set()  # Track which articles have been assigned
+                    
+                    for i, pdf_path in enumerate(existing_pdfs):
+                        progress_bar.progress((i + 1) / len(existing_pdfs))
+                        status_text.text(f"Scanning {pdf_path.name}...")
+                        
+                        # Try to find a match
+                        match_result = try_match_pdf_to_article(pdf_path, included_articles)
+                        
+                        if match_result:
+                            article, idx, match_type, confidence = match_result
+                            article_title = article.get('title', f'Article {idx}')
+                            
+                            # Skip if this article is already assigned to another PDF
+                            if article_title in assigned_articles:
+                                unmatched_pdfs.append({
+                                    'pdf': pdf_path,
+                                    'potential_match': article,
+                                    'match_type': f'duplicate_assignment_{match_type}',
+                                    'confidence': confidence
+                                })
+                                continue
+                            
+                            # Only auto-update if confidence is high enough
+                            if confidence >= 40:  # Much more gentle - 40% confidence is enough
                                 try:
+                                    # Update the article status
                                     if 'id' in articles_df.columns and hasattr(article, 'index') and 'id' in article.index:
                                         mask = articles_df['id'] == article.get('id')
                                     else:
@@ -142,21 +305,133 @@ def show(logger):
                                     if 'pdf_path' not in articles_df.columns:
                                         articles_df['pdf_path'] = ""
                                     
-                                    articles_df.loc[mask, 'full_text_status'] = 'Acquired'
-                                    articles_df.loc[mask, 'pdf_path'] = str(pdf_path)
-                                    updated_count += 1
-                                    break
+                                    # Check if not already assigned to THIS specific PDF
+                                    current_status = articles_df.loc[mask, 'full_text_status'].iloc[0] if not articles_df.loc[mask].empty else 'Awaiting'
+                                    current_pdf_path = articles_df.loc[mask, 'pdf_path'].iloc[0] if not articles_df.loc[mask].empty else ""
+                                    
+                                    # Only skip if ALREADY assigned to the SAME PDF
+                                    if current_status == 'Acquired' and str(current_pdf_path) == str(pdf_path):
+                                        # This article is already correctly assigned to this PDF - skip
+                                        continue
+                                    else:
+                                        # Either not assigned or assigned to different PDF - update it
+                                        articles_df.loc[mask, 'full_text_status'] = 'Acquired'
+                                        articles_df.loc[mask, 'pdf_path'] = str(pdf_path)
+                                        assigned_articles.add(article_title)  # Track this assignment
+                                        updated_count += 1
+                                
                                 except Exception as e:
-                                    logger.error(f"Error updating article {article_id}: {str(e)}")
+                                    logger.error(f"Error updating article for {pdf_path.name}: {str(e)}")
+                            else:
+                                # Lower confidence matches - add to manual review list
+                                unmatched_pdfs.append({
+                                    'pdf': pdf_path,
+                                    'potential_match': article,
+                                    'match_type': match_type,
+                                    'confidence': confidence
+                                })
+                        else:
+                            # No match found
+                            unmatched_pdfs.append({
+                                'pdf': pdf_path,
+                                'potential_match': None,
+                                'match_type': 'no_match',
+                                'confidence': 0
+                            })
                     
+                    # Clear progress indicators
+                    progress_bar.empty()
+                    status_text.empty()
+                    
+                    # Show results
                     if updated_count > 0:
                         # Save the updated articles back to file
-                        from src.utils.data_manager import save_screened_articles
                         save_screened_articles(project_id, articles_df)
-                        st.success(f"✅ Updated status for {updated_count} articles with existing PDFs")
+                        st.success(f"✅ Successfully matched and updated {updated_count} articles with PDFs")
+                        
+                        # Show what was matched
+                        with st.expander(f"📋 View {updated_count} Auto-matched PDFs"):
+                            for pdf_path in existing_pdfs:
+                                match_result = try_match_pdf_to_article(pdf_path, included_articles)
+                                if match_result and match_result[3] >= 40:  # Much more gentle threshold
+                                    article, idx, match_type, confidence = match_result
+                                    st.write(f"📄 **{pdf_path.name}** → _{article.get('title', 'Unknown')[:50]}..._ (via {match_type}, {confidence:.0f}% confidence)")
+                    
+                    # Handle unmatched or low-confidence PDFs
+                    if unmatched_pdfs:
+                        st.warning(f"⚠️ {len(unmatched_pdfs)} PDFs need manual review")
+                        
+                        with st.expander(f"🔍 Manual PDF Matching ({len(unmatched_pdfs)} files)", expanded=True):
+                            st.markdown("**These PDFs couldn't be automatically matched or have low confidence. Please review and manually assign:**")
+                            
+                            for unmatched in unmatched_pdfs:
+                                pdf_path = unmatched['pdf']
+                                potential_match = unmatched['potential_match']
+                                confidence = unmatched['confidence']
+                                
+                                st.markdown(f"---")
+                                col1, col2 = st.columns([1, 1])
+                                
+                                with col1:
+                                    st.markdown(f"**📄 PDF File:**")
+                                    st.code(pdf_path.name)
+                                    
+                                    if potential_match is not None:
+                                        st.markdown(f"**🎯 Suggested Match ({confidence:.0f}% confidence):**")
+                                        st.write(f"_{potential_match.get('title', 'Unknown')[:60]}..._")
+                                        st.caption(f"Authors: {potential_match.get('authors', 'Unknown')[:40]}...")
+                                
+                                with col2:
+                                    st.markdown("**🔗 Manual Assignment:**")
+                                    
+                                    # Create dropdown with all articles
+                                    article_options = ["-- Select Article --"] + [
+                                        f"{i+1}. {article.get('title', f'Article {i+1}')[:50]}..." 
+                                        for i, (_, article) in enumerate(included_articles.iterrows())
+                                    ]
+                                    
+                                    selected_idx = st.selectbox(
+                                        "Choose article:",
+                                        options=range(len(article_options)),
+                                        format_func=lambda x: article_options[x],
+                                        key=f"manual_match_{pdf_path.name}"
+                                    )
+                                    
+                                    if selected_idx > 0:  # An article was selected
+                                        if st.button(f"🔗 Assign PDF", key=f"assign_{pdf_path.name}"):
+                                            try:
+                                                # Get the selected article
+                                                selected_article = included_articles.iloc[selected_idx - 1]
+                                                
+                                                # Update the article status
+                                                if 'id' in articles_df.columns and hasattr(selected_article, 'index') and 'id' in selected_article.index:
+                                                    mask = articles_df['id'] == selected_article.get('id')
+                                                else:
+                                                    mask = articles_df['title'] == selected_article.get('title', '')
+                                                
+                                                if 'full_text_status' not in articles_df.columns:
+                                                    articles_df['full_text_status'] = 'Awaiting'
+                                                if 'pdf_path' not in articles_df.columns:
+                                                    articles_df['pdf_path'] = ""
+                                                
+                                                articles_df.loc[mask, 'full_text_status'] = 'Acquired'
+                                                articles_df.loc[mask, 'pdf_path'] = str(pdf_path)
+                                                
+                                                # Save changes
+                                                save_screened_articles(project_id, articles_df)
+                                                
+                                                st.success(f"✅ Assigned {pdf_path.name} to article!")
+                                                st.rerun()
+                                                
+                                            except Exception as e:
+                                                st.error(f"Error assigning PDF: {str(e)}")
+                    
+                    if updated_count == 0 and not unmatched_pdfs:
+                        st.info("ℹ️ All PDFs appear to already be matched to articles")
+                    
+                    # Always rerun to refresh the status counts
+                    if updated_count > 0:
                         st.rerun()
-                    else:
-                        st.warning("⚠️ Could not match any existing PDFs to articles")
         
         # Show articles and their full-text status
         for idx, (_, article) in enumerate(included_articles.iterrows()):
@@ -240,7 +515,6 @@ def show(logger):
                             articles_df.loc[mask, 'pdf_path'] = str(file_path)
                             
                             # Save the updated articles back to file
-                            from src.utils.data_manager import save_screened_articles
                             save_screened_articles(project_id, articles_df)
                             
                         except Exception as e:
@@ -337,7 +611,6 @@ def show(logger):
             
             with col2:
                 # Check for existing extractions
-                from src.utils.data_manager import load_extracted_data
                 existing_extractions = load_extracted_data(project_id)
                 already_extracted = 0
                 
@@ -859,7 +1132,6 @@ def show(logger):
         st.subheader("Extraction Results Review")
         
         # Load extracted data
-        from src.utils.data_manager import load_extracted_data
         extracted_df = load_extracted_data(project_id)
         
         if extracted_df.empty:
