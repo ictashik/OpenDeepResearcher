@@ -9,3 +9,5 @@ ddgs
 numpy<2.0
 scholarly
 PyYAML
+reportlab
+markdown2
