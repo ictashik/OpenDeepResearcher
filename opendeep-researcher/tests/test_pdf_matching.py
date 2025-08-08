@@ -1,45 +1,32 @@
 #!/usr/bin/env python3
-"""
-Test the new PDF number-based matching strategy
-"""
+"""Tests for PDF number-based matching strategy."""
 
 import re
+import pytest
 
-def test_pdf_number_matching():
-    # Sample PDF filenames and article indices
-    test_cases = [
-        ("12_Graphs where Search Methods are Indistinguishable.pdf", 11),  # Should match (12 -> index 11)
-        ("1_Search for Neutral MSSM Higgs Bosons at LEP.pdf", 0),        # Should match (1 -> index 0)
-        ("99_Some Article.pdf", 98),                                      # Should match (99 -> index 98)
-        ("67_Construction of Hierarchical Neural Architecture.pdf", 66),  # Should match (67 -> index 66)
-        ("no_number_article.pdf", 5),                                     # Should not match
-    ]
-    
-    print("=== PDF NUMBER MATCHING TEST ===")
-    
-    for pdf_name, article_idx in test_cases:
-        print(f"\n📄 PDF: {pdf_name}")
-        print(f"📋 Article Index: {article_idx}")
-        
-        # Extract number from PDF filename
-        pdf_number_match = re.match(r'^(\d+)_', pdf_name)
-        
-        if pdf_number_match:
-            pdf_number = int(pdf_number_match.group(1))
-            print(f"🔢 PDF Number: {pdf_number}")
-            
-            # Check if matches (PDF numbers are 1-based, indices are 0-based)
-            if pdf_number == article_idx + 1:
-                print(f"✅ MATCH! PDF number {pdf_number} matches article index {article_idx} (position {article_idx + 1})")
-                confidence = 98
-            else:
-                print(f"❌ No match. PDF number {pdf_number} != article position {article_idx + 1}")
-                confidence = 0
-        else:
-            print(f"❌ No number prefix found")
-            confidence = 0
-        
-        print(f"📊 Confidence: {confidence}%")
 
-if __name__ == "__main__":
-    test_pdf_number_matching()
+@pytest.mark.parametrize(
+    "pdf_name, article_idx, should_match",
+    [
+        ("12_Graphs where Search Methods are Indistinguishable.pdf", 11, True),
+        ("1_Search for Neutral MSSM Higgs Bosons at LEP.pdf", 0, True),
+        ("99_Some Article.pdf", 98, True),
+        ("67_Construction of Hierarchical Neural Architecture.pdf", 66, True),
+        ("no_number_article.pdf", 5, False),
+    ],
+)
+def test_pdf_number_matching(pdf_name: str, article_idx: int, should_match: bool) -> None:
+    """Verify that leading numbers in PDF filenames map to article indices.
+
+    For matching cases, the extracted number should equal ``article_idx + 1``.
+    Files without a leading number should not match.
+    """
+    match = re.match(r"^(\d+)_", pdf_name)
+
+    if should_match:
+        assert match is not None, "Expected a leading number in the PDF filename"
+        pdf_number = int(match.group(1))
+        assert pdf_number == article_idx + 1
+    else:
+        # Files lacking a leading number should not match
+        assert match is None
