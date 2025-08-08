@@ -4,7 +4,21 @@ from pathlib import Path
 import uuid
 from typing import Dict, List, Optional
 
-DATA_DIR = Path("../data")
+# NOTE:
+#   DATA_DIR was originally defined using ``Path("../data")``.  This made the
+#   location of the data directory depend on the *current working directory*
+#   at import time.  When the application or tests were run from a different
+#   location, data files would be created outside of the project tree (e.g. in
+#   ``/workspace/data``) rather than inside the repository's ``data`` folder.
+#   Such behaviour made the data manager unreliable and caused tests that rely
+#   on the expected directory structure to fail.
+#
+#   To make the path deterministic we derive it from this module's file
+#   location instead of the process's working directory.  ``__file__`` always
+#   points to ``.../src/utils/data_manager.py`` so taking ``parents[2]`` gives us
+#   the repository root directory (``opendeep-researcher``).  From there we join
+#   the ``data`` directory.
+DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 
 def ensure_data_structure():
     """Ensure the data directory structure exists."""
